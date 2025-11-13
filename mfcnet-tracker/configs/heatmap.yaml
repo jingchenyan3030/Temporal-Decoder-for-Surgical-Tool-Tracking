@@ -1,0 +1,36 @@
+data_dir: /data/home/hao/chenyan/data/training_act_data_by_action
+dataset: ACT
+prediction_task: keypoint_heatmap
+mode: training
+action: clip
+
+expt_savedir: /data/home/hao/chenyan/checkpoint
+expt_name: multiframe_expt_act_clip_keypoint_mse
+
+batch_size: 8
+num_workers: 16
+num_classes: 1
+
+loss_fns: [mse]
+loss_wts: [1.0]
+class_weights: [1.0]
+
+lr: 0.0001
+scheduler: StepDecay
+num_epochs: 10
+seed: 42
+resume: false
+starting_epoch: 0
+
+model_type: TernausNetMulti-Basic
+pretrained: false
+train_base_model: true
+load_wts_base_model: null
+load_wts_model: null
+
+input_height: 256
+input_width: 320
+
+add_optflow_inputs: false
+optflow_model: RAFT
+add_depth_inputs: true
