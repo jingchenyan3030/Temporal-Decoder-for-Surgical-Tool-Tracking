@@ -16,9 +16,10 @@ sys.path.append('.')
 sys.path.append('./models/')
 import logging, json, configargparse
 from pathlib import Path
-
-from configs.config_multiframe import train_config_parser as config_parser
-
+# segmemtation model config parser
+#from configs.config_multiframe import train_config_parser as config_parser
+# mse model config parser
+from configs.config_mse import train_config_parser as config_parser
 import tqdm, time, math, random
 import cv2 
 import numpy as np
@@ -35,7 +36,7 @@ from torchvision import transforms
 
 import matplotlib.pyplot as plt
 from src.dataloader_multiframe import get_data_loader
-from src.engine import train_one_epoch, validate
+from src.engine_mse import train_one_epoch, validate
 from models import get_multiframe_segmentation_model as get_model
 from utils.log_utils import AverageMeter, ProgressMeter, init_logging
 from utils.model_utils import load_model_weights, save_model
@@ -64,17 +65,23 @@ def main():
 
     try:
         main_worker(args)
+    except KeyboardInterrupt:
+        if args.global_rank==0:
+            print("KeyboardInterrupt caught, exiting...")
     finally:
-        dist.barrier()
-        dist.destroy_process_group()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 
 def main_worker(args):
     assert len(args.loss_fns) == len(args.loss_wts), "Number of loss functions and loss weights should be equal"
     assert len(args.loss_fns) > 0, "At least one loss function should be specified"
-    assert len(args.class_weights) == args.num_classes, "Number of class weights should be equal to number of classes"
-    args.class_weights = np.array(args.class_weights)
+    if args.prediction_task != 'keypoint_heatmap':
+        assert len(args.class_weights) == args.num_classes, "Number of class weights should be equal to number of classes"
+        args.class_weights = np.array(args.class_weights)
+    else:
+        args.class_weights = None
     args.expt_name = '_'.join([args.expt_name, str(args.fold_index) if args.fold_index!=-1 else 'full']) 
     args.data_dir = Path(args.data_dir)
     args.log_dir = Path(os.path.join(args.expt_savedir, args.expt_name, "logs"))
@@ -129,9 +136,13 @@ def main_worker(args):
 
     if args.load_wts_base_model is not None:
         basemodel_state = torch.load(args.load_wts_base_model, map_location='cpu')
-        model.base_model.load_state_dict(basemodel_state['model'])
-        logger.info("Base model weights loaded from {}".format(args.load_wts_base_model))
-
+        if args.prediction_task == 'keypoint_heatmap' :
+            model.base_model.load_state_dict(basemodel_state['model'], strict=False)
+            logger.info("[heatmap] base_model loaded strict=False (skip mismatched layers/head)")
+        else:
+            model.base_model.load_state_dict(basemodel_state['model'])
+            logger.info("Base model weights loaded from {}".format(args.load_wts_base_model))
+            
     model, start_epoch, load_flag = load_model_weights(model, args.load_wts_model, args.model_type)
     if load_flag:
         logging.info("Model weights loaded from {}".format(args.load_wts_model))
@@ -187,8 +198,23 @@ def main_worker(args):
             model, loss = train_one_epoch(train_dataloader, epoch, model, optimizer, args, logger, writer, optflow_model=optflow_model)
             logging.info("Epoch: {}, Loss: {:.5f}".format(epoch, loss))
             scheduler.step()
-            metrics = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
-            logging.info(json.dumps(metrics))
+
+            # Validation
+            metrics = None
+            if args.global_rank==0:
+                if args.prediction_task != 'keypoint_heatmap':
+                    model.eval()
+                    with torch.no_grad():
+                        metrics = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
+                        logging.info(json.dumps(metrics))
+                else:
+                    model.eval()
+                    with torch.no_grad():
+                        val_loss = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
+                        logging.info(json.dumps(val_loss))
+            if dist.is_initialized():
+                dist.barrier()
+
             if args.global_rank == 0 and epoch%args.save_freq==0:
                 save_model(model.module, args.ckpt_dir, optimizer=optimizer, epoch=epoch)
         except KeyboardInterrupt: 

@@ -10,6 +10,12 @@ from natsort import natsorted
 from pathlib import Path
 import pandas as pd
 
+# keypoint_heatmap:
+#   target: FloatTensor (2,H,W), regression, MSE
+# segmentation:
+#   target: LongTensor (1,H,W), classification
+
+
 def load_optflow_map(path, optflow_dir):
     with open(str(path).replace('images', optflow_dir).replace('jpg', 'flo')) as f:
         optflow = np.fromfile(f, dtype=np.float32)
@@ -17,14 +23,6 @@ def load_optflow_map(path, optflow_dir):
         optflow = optflow[2:].reshape((256,350,2))
     return optflow
 
-def load_attmap(file_name_list, idx, N): 
-    if idx % N == 0: 
-        # attmap = np.zeros((1024, 1280))
-        attmap = np.zeros((480, 640))
-    else:
-        path = file_name_list[idx-1]
-        attmap = cv2.imread(str(path).replace('images', 'attmaps').replace('jpg', 'png'),0)
-    return attmap.astype(np.float32) / 255.0
 
 def load_image(path):
     img = cv2.imread(str(path))
@@ -110,7 +108,20 @@ def load_mask(path, prediction_task):
             mask[anchor_cond]  = 2
             mask[contact_cond] = 3
         return mask
-
+    # NEW ADDING FOR MSE:
+    elif prediction_task =="keypoint_heatmap":
+        sam2_path = Path(str(path).replace("images", "sam_results")).with_suffix(".npy")
+        hm = np.load(sam2_path).astype(np.float32)
+        if hm.ndim == 2:
+            raise ValueError(f"Heatmap must have 2 channels(tip+anchor)")
+        if hm.ndim != 3:
+            raise ValueError(f"Unexpected heatmap shape {hm.shape} at {sam2_path}")
+        # (2,H,W) -> (H,W,2)
+        if hm.shape[0] == 2 and hm.shape[1] != 2:
+            hm = np.transpose(hm, (1,2,0))
+        if hm.shape[2] != 2:
+            raise ValueError(f"UnexpeHeatmap last dim must be 2. Got {hm.shape} at {sam2_path}")
+        return hm
     else:
         raise ValueError('Unknown prediction task: {}'.format(prediction_task))
 
@@ -243,25 +254,58 @@ def get_KPT_dataset_filenames(args):
             train, test = split_dirs(group, num_test)
             train_cases.extend(train)
             test_cases.extend(test)
-
+        
         val_cases = train_cases[-5:] if len(train_cases) > 5 else []
-
+        '''
+        if len(train_cases) >= 2:
+            val_cases = [train_cases[-1]]     # 1 case for val
+            train_cases = train_cases[:-1]    # remaining for train
+        else:
+            val_cases = []
+        '''
         def collect(cases):
             files = []
+
             for case in cases:
                 for video_dir in natsorted(case.iterdir(), key=str):
-                    img_dir, pose_dir = video_dir / "images", video_dir / "pose_map"
-                    if not img_dir.exists() or not pose_dir.exists():
+
+                    img_dir  = video_dir / "images"
+                    pose_dir = video_dir / "pose_map"
+                    sam_dir  = video_dir / "sam_results"
+                    detr_dir = video_dir / "points_detr"
+
+                    if not img_dir.exists() or not pose_dir.exists() or not sam_dir.exists():
                         continue
 
-                    if img_dir.exists() and pose_dir.exists():
-                        for p in natsorted(img_dir.glob("*"), key=str):
-                            if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-                                continue
+                    images = natsorted(
+                        [p for p in img_dir.glob("*") if p.suffix.lower() in [".png",".jpg",".jpeg"]],
+                        key=str
+                    )
+                    poses = natsorted(list(pose_dir.glob("*.png")), key=str)
+                    sam_masks = natsorted(list(sam_dir.glob("frame_*.npy")), key=str)
+                    detr_points = natsorted(list(detr_dir.glob("frame_*.json")), key=str)
 
-                            if (pose_dir / (p.stem + ".png")).exists():
-                                files.append(p)
+                    if not (len(images) == len(poses) == len(sam_masks) == len(detr_points)):
+                        print(
+                            f"[DROP VIDEO] {video_dir} "
+                            f"images={len(images)} poses={len(poses)} npy={len(sam_masks)} detr={len(detr_points)}"
+                        )
+                        continue
+                    '''
+                    # optional: strict index check
+                    ok = True
+                    for i in range(len(images)):
+                        if not (sam_dir / f"frame_{i+1:03d}_mask.npy").exists():
+                            ok = False
+                            break
+                    if not ok:
+                        print(f"[DROP VIDEO] {video_dir} frame index mismatch")
+                        continue
+                    '''
+                    files.extend(images)
+                   
             return files
+
 
         train_files = collect(train_cases)
         val_files = collect(val_cases)
@@ -331,25 +375,8 @@ def get_ACT_dataset_filenames(args):
         return test_file_names, None
 
 
+    
 
-class to_tensor(object):
-    """Convert ndarrays in sample to Tensors."""
-    def __call__(self, sample):
-        image = sample['image'] 
-        attmap = sample['attmap'] 
-        mask = sample['mask'] 
-        return {'image': torch.from_numpy(image.transpose(2,0,1)), 
-                'attmap': torch.from_numpy(attmap).unsqueeze(0), 
-                'mask': torch.from_numpy(mask).unsqueeze(0)}
-
-class customResize(object):
-    def __call__(self, sample):
-        image = sample['image'] 
-        attmap = sample['attmap']
-        mask = sample['mask']
-        return {'image': transforms.Resize((480, 640))(image),
-                'attmap': transforms.Resize((480, 640))(attmap),
-                'mask': transforms.Resize((480, 640))(mask)}
 
 class customRandomHSVDistortion(object):
     def __call__(self, sample):

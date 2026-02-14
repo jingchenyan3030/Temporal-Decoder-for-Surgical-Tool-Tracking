@@ -9,6 +9,7 @@ from src.dataset_jigsaws import JIGSAWS
 from src.dataset_ACT import ACT
 from src.dataset_KPT import KPT
 from src.dataset_KPT_copy import KPT_test
+from src.dataset_KPT_mid import KPT_test_mid
 from torch.utils.data import DataLoader 
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
@@ -30,6 +31,14 @@ class to_tensor(object):
             tensor_dict['input_depth'] = []
             for depth in input_depth: 
                 tensor_dict['input_depth'].append(torch.from_numpy(depth.astype(np.float32)/255.0).unsqueeze(0))
+        if 'points' in sample:
+            tensor_dict['points'] = sample['points']
+        if 'labels' in sample and sample['labels'] is not None:
+            tensor_dict['labels'] = sample['labels']
+        if 'visibility' in sample:
+            tensor_dict['visibility'] = sample['visibility']
+        if 'sam' in sample and sample['sam'] is not None:
+            tensor_dict['sam'] = torch.from_numpy(sample['sam'].astype(np.float32)).unsqueeze(0)
         return tensor_dict
     
 class customResize(object):
@@ -46,6 +55,10 @@ class customResize(object):
     def __call__(self, sample): 
         input = sample['input'] 
         mask = sample['mask'] 
+
+        H_old, W_old = mask.shape[-2], mask.shape[-1]
+        H_new, W_new = self.img_size
+
         resized_dict = {} 
         resized_dict['input'] = []
         resized_dict['mask'] = transforms.Resize(self.img_size, interpolation=tF.InterpolationMode.NEAREST)(mask)
@@ -56,6 +69,21 @@ class customResize(object):
             resized_dict['input_depth'] = []
             for depth in input_depth: 
                 resized_dict['input_depth'].append(transforms.Resize(self.img_size, interpolation=tF.InterpolationMode.NEAREST)(depth))
+
+        if 'points' in sample:
+            pts = sample['points'].clone() if torch.is_tensor(sample['points']) else torch.tensor(sample['points'])
+            sx = float(W_new) / float(W_old)
+            sy = float(H_new) / float(H_old)
+            pts[:, 0] = pts[:, 0] * sx
+            pts[:, 1] = pts[:, 1] * sy
+            resized_dict['points'] = pts
+            resized_dict['labels'] = sample['labels']
+            resized_dict['visibility'] = sample['visibility']
+        if 'sam' in sample and sample['sam'] is not None:
+            resized_dict['sam'] = transforms.Resize(
+                self.img_size, interpolation=tF.InterpolationMode.NEAREST
+            )(sample['sam'])
+
         return resized_dict
 
 class customRandomRotate(object): 
@@ -73,6 +101,9 @@ class customRandomRotate(object):
             rotated_dict['input_depth'] = []
             for depth in input_depth:
                 rotated_dict['input_depth'].append(tF.rotate(depth, angle))
+        if 'sam' in sample and sample['sam'] is not None:
+            rotated_dict['sam'] = tF.rotate(sample['sam'], angle)
+
         return rotated_dict
 
 class customRandomHSVDistortion(object): 
@@ -96,6 +127,8 @@ class customRandomHSVDistortion(object):
         if 'input_depth' in sample: 
             input_depth = sample['input_depth']
             distorted_dict['input_depth'] = input_depth
+        if 'sam' in sample and sample['sam'] is not None:
+            distorted_dict['sam'] = sample['sam']    
         return distorted_dict
 
 class customHorizontalFlip(object): 
@@ -208,8 +241,31 @@ class customNormalize(object):
             normalized_dict['input_depth'] = []
             for depth in input_depth: 
                 normalized_dict['input_depth'].append(depth)
+        if 'points' in sample:
+            normalized_dict['points'] = sample['points']
+        if 'labels' in sample:
+            normalized_dict['labels'] = sample['labels']
+        if 'visibility' in sample:
+            normalized_dict['visibility'] = sample['visibility']
+        if 'sam' in sample and sample['sam'] is not None:
+            normalized_dict['sam'] = sample['sam']
+
         return normalized_dict
 
+# New Adding for DETR:
+def get_kpt_detr_transform(mode, args):
+    if mode == 'train':
+        return transforms.Compose([
+            to_tensor(),
+            customResize((args.input_height, args.input_width)),
+            customNormalize()
+        ])
+    else:
+        return transforms.Compose([
+            to_tensor(),
+            customResize((args.input_height, args.input_width)),
+            customNormalize()
+        ])
 
 # New Adding transform for ACT:
 def get_act_transform(mode, args):
@@ -373,17 +429,23 @@ def get_data_loader(args):
                                     num_workers=args.num_workers, pin_memory=True)
             return None, test_loader
     
+
+
     elif args.dataset == "KPT":
         if args.mode == 'training': 
             train_file_names, val_file_names = get_KPT_dataset_filenames(args)
-            train_transform = get_act_transform('train', args)
-            val_transform = get_act_transform('val', args)
-            train_dataset = KPT_test(train_file_names, train_transform,
+            if args.prediction_task == 'detr_keypoint':
+                train_transform = get_kpt_detr_transform('train', args)
+                val_transform = get_kpt_detr_transform('val', args)
+            else:
+                train_transform = get_act_transform('train', args)
+                val_transform = get_act_transform('val', args)
+            train_dataset = KPT_test_mid(train_file_names, train_transform,
                                     mode=args.mode, prediction_task=args.prediction_task,
                                     num_input_frames=args.num_input_frames,
                                    # num_frames_per_video=args.num_frames_per_video, 
                                     add_depth_inputs=args.add_depth_inputs)
-            val_dataset = KPT_test(val_file_names, val_transform,
+            val_dataset = KPT_test_mid(val_file_names, val_transform,
                                     mode=args.mode, prediction_task=args.prediction_task,
                                     num_input_frames=args.num_input_frames,
                                     # num_frames_per_video=args.num_frames_per_video, 
@@ -399,20 +461,32 @@ def get_data_loader(args):
                     shuffle=True
                 )
                 shuffle_train = False
+
+                val_sampler = DistributedSampler(
+                    val_dataset,
+                    num_replicas=world_size,
+                    rank=global_rank,
+                    shuffle=False
+                )
+
             else:
                 train_sampler = None
+                val_sampler = None
                 shuffle_train = True
 
             train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
                     sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
 
             val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
-                                    num_workers=args.num_workers, pin_memory=True)
+                    sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
             return train_loader, val_loader
         else: 
             test_file_names, _ = get_KPT_dataset_filenames(args)
-            test_transform = get_act_transform('test', args)
-            test_dataset = KPT_test(test_file_names, test_transform, 
+            if args.prediction_task == 'detr_keypoint':
+                test_transform = get_kpt_detr_transform('test', args)
+            else:   
+                test_transform = get_act_transform('test', args)
+            test_dataset = KPT_test_mid(test_file_names, test_transform, 
                                      mode=args.mode, prediction_task=args.prediction_task,
                                      num_input_frames=args.num_input_frames, 
                                      # num_frames_per_video=args.num_frames_per_video, 
@@ -423,6 +497,8 @@ def get_data_loader(args):
 
     else: 
         raise NotImplementedError
+
+
 
 if __name__=="__main__":
     from types import SimpleNamespace

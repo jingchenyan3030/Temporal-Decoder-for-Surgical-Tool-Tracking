@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np 
 
-def get_loss(outputs, targets, loss_fns, loss_wts, args):
+def get_loss(outputs, targets, loss_fns, loss_wts, args, sam=None):
     loss_dict = {} 
     total_loss = 0.0
     for loss_fn, loss_wt in zip(loss_fns, loss_wts):
         if loss_fn == 'mse':
-            loss = LossMSE()(outputs, targets)
+            loss = LossMSE()(outputs, targets, sam=sam)
         elif loss_fn == 'nll':
             loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(outputs, targets)
         elif loss_fn == 'soft_jaccard':
@@ -21,15 +21,33 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args):
     return total_loss, loss_dict
 
 class LossMSE:
-    def __init__(self):
-        self.mse_loss = nn.MSELoss()
-    
-    def __call__(self, outputs, targets):
+    def __init__(self, eps=1e-6):
+        self.eps = eps
+
+    def __call__(self, outputs, targets, sam=None):
         outputs = outputs.float()
         targets = targets.float()
-        loss = self.mse_loss(outputs, targets)
+
+        diff = (outputs - targets) ** 2   # (B,C,H,W)
+        '''
+        if sam is not None:
+            # sam: (B,H,W) or (B,1,H,W)
+            if sam.dim() == 3:
+                sam = sam.unsqueeze(1)    # (B,1,H,W)
+
+            sam = sam.float()
+
+            # broadcast over channel
+            diff = diff * sam
+
+            loss = diff.sum() / (sam.sum() + self.eps)
+        else:
+        '''
+        loss = diff.mean()
+
         return loss
 
+    
 class LossNLL: 
     def __init__(self, class_weights=None, num_classes=1):
         if class_weights is not None:

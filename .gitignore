@@ -4,7 +4,6 @@ da2_finetune
 Depth-Anything-V2
 Depth-Anything-V2/checkpoints
 Depth-Anything-V2/metric_depth
-sam2_act
 sam2_act/checkpoints
 sam2_act/demo
 sam2_act/notebooks

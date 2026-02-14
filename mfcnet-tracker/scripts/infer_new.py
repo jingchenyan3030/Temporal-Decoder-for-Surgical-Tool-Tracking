@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 from torchvision import transforms
-
+from collections import defaultdict
 import matplotlib.pyplot as plt
 from src.dataloader_multiframe import get_data_loader
 from src.metrics import get_metrics
@@ -147,9 +147,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
         out_rel = rel.parent / "pred"
 
     if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "test_multiframe_act" / out_rel
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe" / out_rel
     else:
-        out_dir = Path(args.data_dir).parent / "test_multiframe" / out_rel
+        out_dir = Path(args.data_dir).parent / "0923_test_multiframe" / out_rel
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img_copy = input_rgb.copy()
@@ -189,6 +189,10 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
     data_time_start = time.time()
     step = 0 
     all_pres_gt = []; all_pres = []
+
+
+    # collect predicted points
+    pred_db = {}
 
     with torch.no_grad():
         for sample in dataloader: 
@@ -231,6 +235,8 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
 
             output_classes = output.data.cpu().numpy().argmax(axis=1)
             B = mask.size(0)
+            H_pred = output.shape[2]
+            W_pred = output.shape[3]
 
             batch_time.update(time.time() - batch_time_start)
             use_tracking = (multi_tracker is not None) and (B == 1)
@@ -243,7 +249,8 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                 }
                 multi_tracker.update(frame_res)
                 tracks = multi_tracker.get_active()
-            
+
+            # process and save outputs at same time
             if step < len(file_names):      
                 if step % args.save_output_freq == 0:
                     end = min(step + B, len(file_names))
@@ -252,9 +259,65 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         pred_mask = output_classes[b].astype(np.uint8)
                         ori_img = postprocess_image(input[0][b,:3,:,:].cpu().numpy())
 
+                        # 2) prepare predicted points
+                        rel_img_path = os.path.relpath(img_path, str(args.data_dir))
+                        tip_pts    = None
+                        anchor_pts = None
+                        if "tip" in results:
+                            tip_pts = results["tip"][b]
+                        if "anchor" in results:
+                            anchor_pts = results["anchor"][b]
+
+                        if tip_pts is None:
+                            tip_list = []
+                        else:
+                            tip_np   = np.asarray(tip_pts, dtype=np.float32)
+                            tip_list = tip_np.tolist()    # save [x, y, score]
+
+                        if anchor_pts is None:
+                            anchor_list = []
+                        else:
+                            anchor_np   = np.asarray(anchor_pts, dtype=np.float32)
+                            anchor_list = anchor_np.tolist()
+
+
+                        rel_path_obj = Path(rel_img_path)
+                        parts = rel_path_obj.parts
+
+                        if "images" in parts:
+                            idx = parts.index("images")
+                            video_rel = Path(*parts[:idx])
+                        else:
+                            video_rel = rel_path_obj.parent
+
+                        if args.dataset == "ACT":
+                            base_pred_root = Path(args.data_dir).parent / "act_test_multiframe"
+                        else:
+                            base_pred_root = Path(args.data_dir).parent / "0923_test_multiframe"
+
+                        json_dir = base_pred_root / video_rel
+                        json_dir.mkdir(parents=True, exist_ok=True)
+                        json_path = json_dir / "pred_points.json"
+
+                        if json_path.exists():
+                            with open(json_path, "r") as f:
+                                video_pred = json.load(f)
+                        else:
+                            video_pred = {}
+
+                        video_pred[rel_img_path] = {
+                            "W_pred": W_pred,
+                            "H_pred": H_pred,
+                            "tip": tip_list,
+                            "anchor": anchor_list,
+                        }
+
+                        with open(json_path, "w") as f:
+                            json.dump(video_pred, f, indent=2)
 
                         vis_keypoints = prepare_vis_keypoints(results, b, pred_mask, contact_id=3)
                         save_points_prediction(args, img_path, vis_keypoints, ori_img)
+
                     step = end
                 else:
                     step = min(step + B, len(file_names))
@@ -264,7 +327,7 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
 
 
 
-
+        
     
     # Convert the lists to numpy arrays for easier handling
     all_pres_gt = np.array(all_pres_gt)

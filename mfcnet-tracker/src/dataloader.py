@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 import albumentations as A
 from albumentations.pytorch.transforms import ToTensorV2 as img_to_tensor
-from albumentations import Compose, Resize, Normalize, VerticalFlip, RandomCrop, Rotate
+from albumentations import Compose, Resize, Normalize, VerticalFlip, HorizontalFlip, RandomCrop, Rotate
 from albumentations import GaussianBlur, MotionBlur, HueSaturationValue, ColorJitter
 import sys
 sys.path.append('./')
@@ -90,11 +90,22 @@ class RoboticSurgeryFramesDataset(Dataset):
         idx = idx * self.downsample_rate
         img_file_name = self.file_names[idx]
         image = load_image(img_file_name)
-        mask = load_mask(img_file_name, self.prediction_task)
-        data = {'image': image, 'mask': mask}
-        augmented = self.transform(**data)
-        image = augmented['image']
-        mask = augmented['mask']
+
+        if self.prediction_task == "keypoint_heatmap":
+            hm = load_mask(img_file_name, self.prediction_task)
+            augmented = self.transform(image=image, hm=hm)
+            image = augmented['image']
+            hm = augmented['hm']
+
+            if hm.dim() == 4:
+                hm = hm.squeeze(0)
+            return image, hm
+        else:
+            mask = load_mask(img_file_name, self.prediction_task)
+            data = {'image': image, 'mask': mask}
+            augmented = self.transform(**data)
+            image = augmented['image']
+            mask = augmented['mask']
         return image, mask 
 
 # Custom vertical flip transformation class
@@ -167,25 +178,50 @@ class CustomHorizontalFlip(A.DualTransform):
 
 def get_transform(mode, args): 
     if args.add_optflow_inputs: 
-            raise ValueError('Not implemented yet')
+        raise ValueError('Not implemented yet')
+    is_heatmap = (args.prediction_task == 'keypoint_heatmap')
+    if is_heatmap:
+        if mode == 'train':
+            add_tags = {'hm':'image'}
+            transform = Compose([Resize(args.input_height, args.input_width, interpolation = cv2.INTER_LINEAR),
+                                 VerticalFlip(p=0.5),
+                                 HorizontalFlip(p=0.5),
+                                 Rotate(limit=(-15,15), p=1, interpolation= cv2.INTER_LINEAR),
+                                 ColorJitter(brightness=0.05, contrast=0.05,saturation=0.05, hue=0, p=0.5),
+                                 Normalize(p=1),
+                                 img_to_tensor()
+                                 ], additional_targets=add_tags)
+            return transform
+        else:
+            add_tags = {'hm':'image'}
+            transform = Compose([Resize(args.input_height, args.input_width, interpolation = cv2.INTER_LINEAR),
+                                 Normalize(p=1),
+                                 img_to_tensor()
+                                 ], additional_targets=add_tags)
+            return transform
+
+    
     if mode=='train': 
         transform = Compose([Resize(args.input_height, args.input_width), CustomVerticalFlip(p=0.5, task=args.prediction_task), #VerticalFlip(p=0.5), 
-                             CustomHorizontalFlip(p=0.5, task=args.prediction_task), 
-                             Rotate(limit=(-15,15), p=1), ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0, p=0.5),
-                            # HueSaturationValue(hue_shift_limit=5, sat_shift_limit=5, val_shift_limit=0, p=0.5),
-                            Normalize(p=1), 
-                            img_to_tensor()])
+                                CustomHorizontalFlip(p=0.5, task=args.prediction_task), 
+                                Rotate(limit=(-15,15), p=1), ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0, p=0.5),
+                                # HueSaturationValue(hue_shift_limit=5, sat_shift_limit=5, val_shift_limit=0, p=0.5),
+                                Normalize(p=1), 
+                                img_to_tensor()])
+        return transform
     elif mode=='val':
         transform = Compose([Resize(args.input_height, args.input_width), 
-                             Normalize(p=1), 
-                             img_to_tensor()])
+                                Normalize(p=1), 
+                                img_to_tensor()])
+        return transform
     elif mode=='test':
         transform = Compose([Resize(args.input_height, args.input_width), 
-                             Normalize(p=1),  
-                             img_to_tensor()]) 
+                                Normalize(p=1),  
+                                img_to_tensor()]) 
+        return transform
     else:
         raise NotImplementedError
-    return transform
+
 
 def get_data_loader(args):
     if args.dataset == 'MICCAI2017': 
