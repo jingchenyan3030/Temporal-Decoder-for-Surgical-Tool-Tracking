@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-
 from segmentation_models_pytorch import Segformer
 from torchvision.models.segmentation.deeplabv3 import DeepLabHead
 from torchvision.models.segmentation.fcn import FCNHead
@@ -14,15 +13,15 @@ from .tap_model import TAPNet11, TAPNet16
 from .multiframe_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
 '''
-
+'''
 # mse multi-frame models
 from .multiframe_mse_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
-
 '''
+
 from .multiframe_model_motr import TernusNetMultiDETRBasic, TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
-'''
+
 
 from .hrnet import HighResolutionNet
 from .bn_helper import BatchNorm2d
@@ -95,6 +94,7 @@ def get_multiframe_segmentation_model(args):
     elif args.model_type == 'HRNetMulti-Large':
         model = HRNetMultiLarge(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,
                                 optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)
+    
     elif args.model_type == 'TernusNetMultiDETRBasic':
         model = TernusNetMultiDETRBasic(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,
                                 optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)

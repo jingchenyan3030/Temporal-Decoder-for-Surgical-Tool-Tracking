@@ -47,7 +47,8 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
                 sam = sample.get('sam', None)
                 if sam is not None:
                     sam = sam.float().cuda(non_blocking=True)
-                    sam = sam.squeeze(1)
+                    if sam.dim() == 3:
+                            sam = sam.unsqueeze(1) # add channel dimension
                 if mask.dim() == 5:
                     mask = mask.squeeze(1)
             elif args.prediction_task == 'detr_keypoint':
@@ -68,6 +69,13 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
             # Different task:
             if args.prediction_task == 'keypoint_heatmap':
                 mask = sample['mask'].float()
+                sam = sample.get('sam', None)
+                if sam is not None:
+                    sam = sam.float()
+                    if sam.dim() == 3:
+                            sam = sam.unsqueeze(1) # add channel dimension
+                if mask.dim() == 5:
+                    mask = mask.squeeze(1)
             elif args.prediction_task == 'detr_keypoint':
                 targets = []
                 B = len(sample["points"])
@@ -102,13 +110,13 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
         # Forward pass
         if args.add_optflow_inputs:
             if args.add_depth_inputs:
-                output = model(input, optflow=optflow, depth=input_depth)
+                output = model(input, optflow=optflow, depth=input_depth,sam=sam, alpha=0.2)
             else:
-                output = model(input, optflow=optflow)
+                output = model(input, optflow=optflow, sam=sam, alpha=0.2)
         elif args.add_depth_inputs:
-            output = model(input, depth=input_depth)
+            output = model(input, depth=input_depth, sam=sam, alpha=0.2)
         else: 
-            output = model(input)
+            output = model(input, sam=sam, alpha=0.2)
 
         # Baseed on the task, compute loss
         if args.prediction_task == 'keypoint_heatmap' and 'mse' in args.loss_fns:
@@ -171,7 +179,8 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
     N = len(args.loss_fns) 
     compute_metrics = (args.prediction_task not in ['keypoint_heatmap','detr_keypoint']) and (len(args.metric_fns) > 0)
     with torch.no_grad(): 
-        for sample in dataloader: 
+        for sample in dataloader:
+            sam = None 
             data_time.update(time.time() - data_time_start)
             batch_time_start = time.time() 
             if torch.cuda.is_available():
@@ -182,7 +191,8 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
                     sam = sample.get('sam', None)
                     if sam is not None: 
                         sam = sam.float().cuda(non_blocking=True)
-                        sam = sam.squeeze(1)
+                        if sam.dim() == 3:
+                            sam = sam.unsqueeze(1) # add channel dimension  
                     if mask.dim() == 5:
                         mask = mask.squeeze(1)
                 elif args.prediction_task == 'detr_keypoint':
@@ -235,13 +245,13 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
             # Forward pass    
             if args.add_optflow_inputs:
                 if args.add_depth_inputs:
-                    output = model(input, optflow=optflow, depth=input_depth)
+                    output = model(input, optflow=optflow, depth=input_depth, sam=sam, alpha=0.2)
                 else:
-                    output = model(input, optflow=optflow)
+                    output = model(input, optflow=optflow, sam=sam, alpha=0.2)
             elif args.add_depth_inputs:
-                output = model(input, depth=input_depth)
+                output = model(input, depth=input_depth, sam=sam, alpha=0.2)
             else:
-                output = model(input)
+                output = model(input, sam=sam, alpha=0.2)
             # Based on the task, compute loss
             if args.prediction_task == 'keypoint_heatmap' and 'mse' in args.loss_fns:
                 # For keypoint heatmap prediction with MSE loss, do not

@@ -8,7 +8,7 @@ def has_nonempty_images(video_dir: Path) -> bool:
     img_dir = video_dir / "images"
     if not img_dir.is_dir():
         return False
-    # 认为存在任意图片文件就算有效（png/jpg/jpeg 都算）
+
     exts = (".png", ".jpg", ".jpeg")
     for p in img_dir.iterdir():
         if p.is_file() and p.suffix.lower() in exts:

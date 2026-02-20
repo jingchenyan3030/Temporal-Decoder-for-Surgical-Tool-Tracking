@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+# written by Chenyan
 
 import os, csv, json
 import numpy as np

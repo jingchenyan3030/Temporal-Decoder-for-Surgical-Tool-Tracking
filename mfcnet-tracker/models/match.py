@@ -60,20 +60,23 @@ class HungarianMatcher(nn.Module):
         # New Adding visibility prediction
         tgt_ids_list = []
         tgt_pts_list = []
-        size = []
+        sizes = []
+
         for v in targets:
-            if "visibility" in v:
-                keep = (v["visibility"] > 0.5)
-                tgt_ids_list.append(v["labels"][keep])
-                tgt_pts_list.append(v["points"][keep])
-                size.append(len(v["points"][keep]))
+            if "valid" in v:
+                keep = v["valid"]
             else:
-                tgt_ids_list.append(v["labels"])
-                tgt_pts_list.append(v["points"])
-                size.append(len(v["points"]))
+                keep = (v["labels"] >= 0)
+
+            if "visibility" in v:
+                keep = keep & (v["visibility"] > 0.5)
+
+            tgt_ids_list.append(v["labels"][keep])
+            tgt_pts_list.append(v["points"][keep])
+            sizes.append(int(keep.sum().item()))
 
         # End
-        if sum (size) == 0:
+        if sum (sizes) == 0:
             # If no visible points in batch, return empty matches
             return [(torch.empty(0, dtype=torch.int64),
              torch.empty(0, dtype=torch.int64)) for _ in range(bs)]
@@ -101,7 +104,6 @@ class HungarianMatcher(nn.Module):
         if not torch.isfinite(C).all():
             raise ValueError("Cost matrix C has NaN/Inf")
 
-        sizes = size
         Cs = list(C.split(sizes, -1))
         indices = []
         for b, c in enumerate(Cs):

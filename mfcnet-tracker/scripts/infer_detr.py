@@ -1,5 +1,4 @@
 """
-Script for running inference for mse heatmap models 
 written by Chenyan 
 """
 
@@ -32,44 +31,7 @@ from utils.train_utils import add_metrics_meters
 from utils.vis_utils import mask_overlay, draw_plus
 from utils.localization_utils_v2 import centroid_error_10_classes, centroid_error_4_classes
 from sklearn.metrics import confusion_matrix, precision_score, recall_score
-from src.HeatmapParser import HeatmapParser
-
-# predicted heatmap:
-def save_pred_heatmaps(hm, ori_img, save_dir, frame_name, class_names = ('tip','anchor'), cmap=cv2.COLORMAP_VIRIDIS):
-    save_dir.mkdir(parents=True, exist_ok=True)
-    for c, cname in enumerate(class_names):
-        if c >= hm.shape[0]:
-            continue
-        class_map = hm[c]
-
-        # normalize like SAM2
-        vmin = class_map.min()
-        vmax = class_map.max()
-        norm = (class_map - vmin) / (vmax - vmin + 1e-6)
-        norm = (norm * 255).astype(np.uint8)
-
-        color_hm = cv2.applyColorMap(norm, cmap)
-
-        # 1) pure heatmap
-        cv2.imwrite(
-            str(save_dir / f"{frame_name}_heatmap_{cname}.png"),
-            color_hm
-        )
-
-        # 2) overlay
-        overlay = cv2.addWeighted(ori_img, 0.7, color_hm, 0.3, 0)
-        cv2.imwrite(
-            str(save_dir / f"{frame_name}_overlay_{cname}.png"),
-            cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
-        )
-        print(
-    f"[DEBUG] {frame_name} | "
-    f"tip max={hm[0].max():.4f}, "
-    f"anchor max={hm[1].max():.4f}"
-)
-
-    return
-
+from models.PostProcessPoints import PostProcessPointsFixed
 
 # Adding--Sub1: from segmentation to mask to get contact area --> polygon -> 4 points
 # sub-function: Contour--4 point
@@ -180,9 +142,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
         out_rel = rel.parent / "pred"
 
     if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse" / out_rel
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe_detr" / out_rel
     else:
-        out_dir = Path(args.data_dir).parent / "0923_test_multiframe_mse_raw" / out_rel
+        out_dir = Path(args.data_dir).parent / "0923_test_multiframe_detr_raw" / out_rel
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img_copy = input_rgb.copy()
@@ -208,7 +170,7 @@ def main():
     args = parser.parse_args() 
     main_worker(args) 
 
-def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=None, optflow_model=None, multi_tracker = None): 
+def test(dataloader, model, args, file_names, logger, postprocess, writer=None, optflow_model=None, multi_tracker=None):
     if args.add_optflow_inputs: 
         assert optflow_model is not None, "Optical flow model should be provided"
         optflow_model.eval()
@@ -264,98 +226,85 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
             else: 
                 output = model(input)
 
-            # MSE HEATMAP DECODE:
-            output_heatmaps = output.detach().cpu().numpy()  # [B, C, H, W]
-            B, C, H, W = output_heatmaps.shape
+            # ===== DETR DECODE =====
+            # model forward returns (outputs_dict, hs)
+            outputs, _ = output
 
-            end = min(step+B, len(file_names))
-            results = heatmap_parser.parse(output.detach())
+            # outputs["pred_logits"]: (B,Q,3)
+            B = outputs["pred_logits"].shape[0]
+            H = args.input_height
+            W = args.input_width
+
+            pred_items_batch = postprocess(outputs)   # list length B, each is list of dicts
+
+            VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
+
             for b in range(B):
-                hm = output_heatmaps[b]  # [C, H, W]
-                VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
                 ori_img = postprocess_image(
                     input[VIS_IDX][b, :3, :, :].cpu().numpy()
                 )
+
                 img_path = Path(sample['center_path'][b])
                 rel_img_path = os.path.relpath(img_path, str(args.data_dir))
-                frame_name = img_path.stem   
-                # ===== save heatmaps only =====
-                base_vis_dir = Path(args.data_dir).parent / "testing_multiframe_mse_mid" / "pred_heatmaps"
-                case_name = img_path.parents[1].name
-                heatmap_save_dir = (
-                    Path(args.data_dir).parent.parent
-                    / "testing_multiframe_mse_mid"
-                    / "pred_heatmaps"
-                    / case_name
-                )
-                
-                save_pred_heatmaps(
-                    hm=hm,
-                    ori_img=ori_img,
-                    save_dir=heatmap_save_dir,
-                    frame_name=frame_name,
-                    class_names=("tip", "anchor")
-                )
-                
-                if heatmap_parser is not None:
-                    tip_pts    = results["tip"][b] if "tip" in results else []
-                    anchor_pts = results["anchor"][b] if "anchor" in results else []  
+                frame_name = img_path.stem
 
-                    if tip_pts is None or len(tip_pts) == 0:
-                        tip_list = []
-                    else:
-                        tip_list = np.asarray(tip_pts, dtype=np.float32).tolist()
+                items = pred_items_batch[b]  # [{'label','x','y',...}, ...]
 
-                    if anchor_pts is None or len(anchor_pts) == 0:
-                        anchor_list = []
-                    else:
-                        anchor_list = np.asarray(anchor_pts, dtype=np.float32).tolist()
+                # split for visualization function
+                tip_list, anchor_list = [], []
+                for it in items:
+                    x, y = float(it["x"]), float(it["y"])
+                    s = float(it.get("score", 1.0))
+                    if it["label"] == "tool_tip":
+                        tip_list.append([x, y, s])
+                    elif it["label"] == "tool_anchor":
+                        anchor_list.append([x, y, s])
 
-                    rel_path_obj = Path(rel_img_path)
-                    parts = rel_path_obj.parts
-                    if "images" in parts:
-                        idx = parts.index("images")
-                        video_rel  = Path(*parts[:idx])
-                    else:
-                        video_rel = rel_path_obj.parent
+                # ---- save per-frame json (recommended, matches your GT style) ----
+                # put outputs under same video root: .../pred_points_detr/<frame>.json
+                rel_path_obj = Path(rel_img_path)
+                parts = rel_path_obj.parts
+                if "images" in parts:
+                    idx = parts.index("images")
+                    video_rel = Path(*parts[:idx])
+                else:
+                    video_rel = rel_path_obj.parent
 
-                    if args.dataset == 'ACT':
-                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse"
-                    else:
-                        base_pred_root = Path(args.data_dir).parent / "0923_test_multiframe_mse_raw"
+             
+                if args.dataset == "ACT":
+                    base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_detr"   
+                else:
+                    base_pred_root = Path(args.data_dir).parent / "kpt_test_multiframe_detr_raw"
+
+             
+                json_dir = base_pred_root / video_rel
+                json_dir.mkdir(parents=True, exist_ok=True)
+                json_path = json_dir / "pred_points.json"
+
+                if json_path.exists():
+                    with open(json_path, "r") as f:
+                        video_pred = json.load(f)
+                else:
+                    video_pred = {}
+
+             
+                video_pred[rel_img_path] = {
+                    "W_pred": int(args.input_width),
+                    "H_pred": int(args.input_height),
+                    "tip": tip_list,
+                    "anchor": anchor_list
+                }
+
+                with open(json_path, "w") as f:
+                    json.dump(video_pred, f, indent=2)
+
+                # ---- save overlay points png (reuse your existing function) ----
+                keypoints_dict = {
+                    "tip": tip_list,
+                    "anchor": anchor_list
+                }
+                save_points_prediction(args, img_path, keypoints_dict, ori_img)
                     
-                    json_dir = base_pred_root / video_rel
-                    json_dir.mkdir(parents=True, exist_ok=True)
-                    json_path = json_dir / "pred_points.json"
-
-                    if json_path.exists():
-                        with open(json_path, 'r') as f:
-                            video_pred = json.load(f)
-                    else:
-                        video_pred = {}
-
-                    video_pred[rel_img_path] = {
-                        "W_pred": W,
-                        "H_pred": H,
-                        "tip": tip_list,
-                        "anchor": anchor_list
-                    }
-                    with open(json_path, 'w') as f:
-                        json.dump(video_pred, f, indent=2)
-
-                    keypoints_dict = {
-                        "tip": tip_pts,
-                        "anchor": anchor_pts
-                    }
-                    save_points_prediction(
-                        args,
-                        img_path,
-                        keypoints_dict,
-                        ori_img
-                    )  
-
-            step = end
-        
     return 
 
 def main_worker(args): 
@@ -450,34 +399,17 @@ def main_worker(args):
     else: 
         logger.info("No model weights loaded")
     
-    if args.dataset == 'ACT':
-        if args.action == 'dissect':
-            CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 5, "max_keep": 1, "threshold": 0.1},
-            1: {"name": "anchor", "topk": 5, "max_keep": 2, "threshold":0.1},
-             }
-        else:
-            CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 5, "max_keep": 4, "threshold": 0.05},
-            1: {"name": "anchor", "topk": 5, "max_keep": 2, "threshold":0.05},
-            }
-    else: 
-        if args.action == 'dissect':
-            CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 5, "max_keep": 1, "threshold": 0.1},
-            1: {"name": "anchor", "topk": 5, "max_keep": 2, "threshold":0.1},
-             }
-        else:
-            CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 5, "max_keep": 2, "threshold": 0.1},
-            1: {"name": "anchor", "topk": 5, "max_keep": 1, "threshold":0.1},
-            }
-    heatmap_parser  = HeatmapParser(CHANNEL_CONFIGS, nms_kernel=3, nms_padding=1)
-
-    multi_tracker = None
-
-    test(test_dataloader, model, args, test_file_names, logger, heatmap_parser = heatmap_parser , writer=None, optflow_model=optflow_model, multi_tracker=multi_tracker)
-    return
+    # set up postprocess module
+    postprocess = PostProcessPointsFixed(
+        H=args.input_height,
+        W=args.input_width,
+        vis_thresh=getattr(args, "vis_thresh", 0.5),
+        cls_thresh=getattr(args, "cls_thresh", 0.0),
+        no_object_id=2
+    )
+    test(test_dataloader, model, args, test_file_names, logger,
+     postprocess=postprocess, writer=None, optflow_model=optflow_model, multi_tracker=None)
+    return 
 
 
 if __name__ == '__main__':

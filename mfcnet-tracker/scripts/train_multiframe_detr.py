@@ -1,8 +1,3 @@
-"""
-Training script for multi-frame tool-tip/pose detection. 
-Author: Bhargav Ghanekar
-"""
-
 import os
 # import torch
 # os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'

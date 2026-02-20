@@ -14,7 +14,7 @@ def collect_visible_frames(json_path: Path):
     for fid, pts in frames.items():
         if all(pt.get("vis", True) for pt in pts):
             visible_abs.append(fid)
-    return visible_abs  # 绝对帧号
+    return visible_abs  
 
 def generate_visible_json_for_case(training_case_dir, surg_case_ann_dir):
     training_case_dir = Path(training_case_dir)
@@ -28,7 +28,7 @@ def generate_visible_json_for_case(training_case_dir, surg_case_ann_dir):
     with mapping_csv.open(newline='') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # 这些字段来自你的 CSV
+       
             json_file   = row["json_file"]
             start_frame = int(row["start_frame"])
             end_frame   = int(row["end_frame"])
@@ -41,10 +41,8 @@ def generate_visible_json_for_case(training_case_dir, surg_case_ann_dir):
 
             out_dir.mkdir(parents=True, exist_ok=True)
 
-            # 1) 先得到“绝对可见帧”
             visible_abs = collect_visible_frames(json_path)
 
-            # 2) 过滤到当前 clip 的区间，并转为“本地帧号(从1开始)”
             visible_local = []
             for fid in visible_abs:
                 if start_frame <= fid <= end_frame:
@@ -53,7 +51,6 @@ def generate_visible_json_for_case(training_case_dir, surg_case_ann_dir):
 
             visible_local.sort()
 
-            # 3) 写到 video_xxx/visible_frames.json
             out_json_path = out_dir / "visible_frames.json"
             with out_json_path.open('w') as fout:
                 json.dump({"visible_frames": visible_local}, fout, indent=2)

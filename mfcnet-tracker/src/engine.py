@@ -60,7 +60,8 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
                     targets.append({
                         "points": sample["points"][b].cuda(non_blocking=True),
                         "labels": sample["labels"][b].cuda(non_blocking=True),
-                        "visibility": sample["visibility"][b].cuda(non_blocking=True)   
+                        "visibility": sample["visibility"][b].cuda(non_blocking=True),  
+                        "valid": sample["valid"][b].cuda(non_blocking=True), 
                     })
             else:
                 mask = sample['mask'].long().cuda(non_blocking=True)
@@ -78,7 +79,8 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
                     targets.append({
                         "points": sample["points"][b],
                         "labels": sample["labels"][b],
-                        "visibility": sample["visibility"][b]  
+                        "visibility": sample["visibility"][b],
+                        "valid": sample["valid"][b],
                     })
 
             else:
@@ -245,7 +247,8 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
                         targets.append({
                             "points": sample["points"][b].cuda(non_blocking=True),
                             "labels": sample["labels"][b].cuda(non_blocking=True),
-                            "visibility": sample["visibility"][b].cuda(non_blocking=True)   
+                            "visibility": sample["visibility"][b].cuda(non_blocking=True),
+                            "valid": sample["valid"][b].cuda(non_blocking=True),   
                         })
                 else:
                     mask = sample['mask'].long().cuda(non_blocking=True)
@@ -263,7 +266,8 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
                         targets.append({
                             "points": sample["points"][b],
                             "labels": sample["labels"][b],
-                            "visibility": sample["visibility"][b]  
+                            "visibility": sample["visibility"][b],
+                            "valid": sample["valid"][b],  
                         })
                 else:
                     mask = sample['mask'].long()

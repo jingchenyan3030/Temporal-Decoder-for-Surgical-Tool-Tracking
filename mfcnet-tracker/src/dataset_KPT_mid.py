@@ -206,7 +206,7 @@ class KPT_test_mid(Dataset):
             while len(pts_all) < 3:
                 pts_all.append([0.0, 0.0])
                 vis_all.append(0.0)
-                lab_all.append(0) 
+                lab_all.append(-1) 
 
             assert len(pts_all) == len(lab_all) == len(vis_all), (f"Length mismatch in {json_path}: pts={len(pts_all)} "f"lab={len(lab_all)} vis={len(vis_all)}")
 
@@ -219,6 +219,9 @@ class KPT_test_mid(Dataset):
             H, W = img0.shape[:2]
             mask = np.zeros((1, H, W), dtype=np.float32)
             points, visibility = sanitize_points(points, visibility, H, W, oob_policy="invalidate")
+            labels = labels.clone()
+            labels[visibility < 0.5] = -1
+            valid = (labels >= 0)
         else:
             mask = load_mask(img_t, self.prediction_task)
         #=== end task specific loading
@@ -251,6 +254,7 @@ class KPT_test_mid(Dataset):
             sample['points'] = points
             sample['labels'] = labels
             sample['visibility'] = visibility
+            sample['valid'] = valid
         if self.add_depth_inputs:
             sample['input_depth'] = input_depth
 

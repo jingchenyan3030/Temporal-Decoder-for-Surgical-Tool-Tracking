@@ -1,6 +1,5 @@
 """
-Script for running inference for tool-tip/pose segmentation models 
-Author: Bhargav Ghanekar
+written by Chenyan
 """
 
 import os 

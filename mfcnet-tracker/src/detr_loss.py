@@ -1,83 +1,116 @@
-# loss_detr_keypoint.py
+# Chenyan
 import torch
 import torch.nn.functional as F
 
-'''
-def aux_seg_loss(outputs, target_mask):
-    seg_logits = outputs["aux_seg_logits"]  # (B, C, H, W)
+def compute_detr_point_loss(
+    outputs,
+    targets,
+    indices,
+    w_cls=1.0,
+    w_point=1.0,
+    w_vis=1.0,
+    alpha=0.02,
+    no_object=2,
+):
+    pred_logits    = outputs["pred_logits"]        # (B,Q,3)
+    pred_points    = outputs["pred_points"]        # (B,Q,2) in [0,1]
+    pred_vislogits = outputs["pred_visibility"]    # (B,Q) logits
 
-    # target_mask: (B,H,W) long
-    if target_mask.dim() == 4 and target_mask.size(1) == 1:
-        target_mask = target_mask[:, 0]
-    target_mask = target_mask.long()
+    B, Q, C = pred_logits.shape
+    device = pred_logits.device
 
-    return F.cross_entropy(seg_logits, target_mask)
-'''
+    zero = (pred_logits.sum() + pred_points.sum() + pred_vislogits.sum()) * 0.0
 
-import torch
-import torch.nn.functional as F
+    loss_cls_sum = zero
+    loss_point_sum = zero
+    loss_vis_matched_sum = zero
+    loss_vis_unmatched_sum = zero
 
-def compute_detr_point_loss(outputs, targets, indices,
-                            w_cls=1.0, w_point=1.0, w_vis=1.0):
+    n_matched_total = 0
+    n_unmatched_total = 0
 
+    for b in range(B):
+        src_idx, tgt_idx = indices[b]
 
-    zero = (
-    outputs["pred_logits"].sum()
-    + outputs["pred_points"].sum()
-    + outputs["pred_visibility"].sum()
-) * 0.0
-
-
-    loss_cls   = zero
-    loss_point = zero
-    loss_vis   = zero
-    num = 0  # count valid matched batches (len(src_idx) > 0)
-
-    for b, (src_idx, tgt_idx) in enumerate(indices):
-        if len(src_idx) == 0:
-            continue
-
-        pred_logits = outputs["pred_logits"][b, src_idx]               # (n, C)
-        pred_pts    = outputs["pred_points"][b, src_idx]               # (n, 2)
-        pred_vis    = outputs["pred_visibility"][b, src_idx].view(-1)  # (n,)
-
-        tgt = targets[b]
-        if "visibility" in tgt:
-            keep = (tgt["visibility"] > 0.5)
-            gt_labels_all = tgt["labels"][keep]
-            gt_pts_all    = tgt["points"][keep]
-            vis_all       = tgt["visibility"][keep].float()  # 这里基本全是1
+        # robust n_match
+        if torch.is_tensor(src_idx):
+            n_match = int(src_idx.numel())
         else:
-            gt_labels_all = tgt["labels"]
-            gt_pts_all    = tgt["points"]
-            vis_all       = torch.ones_like(gt_labels_all, dtype=torch.float32)
+            n_match = int(len(src_idx))
 
-        gt_labels = gt_labels_all[tgt_idx].long()
-        gt_pts    = gt_pts_all[tgt_idx]
-        vis       = vis_all[tgt_idx]
+        # -------- build the SAME keep as matcher used --------
+        tgt = targets[b]
+        if "valid" in tgt:
+            keep = tgt["valid"].to(torch.bool)
+        else:
+            keep = (tgt["labels"] >= 0)
 
+        if "visibility" in tgt:
+            keep = keep & (tgt["visibility"] > 0.5)
 
-        # class (mask by vis, but don't skip; denom clamp avoids 0-div)
-        ce = F.cross_entropy(pred_logits, gt_labels, reduction="none")  # (n,)
-        denom = vis.sum().clamp(min=1.0)
-        loss_cls = loss_cls + (ce * vis).sum() / denom
+        # these are the arrays matcher indexed into
+        gt_labels_kept = tgt["labels"][keep]            # (Ng,)
+        gt_points_kept = tgt["points"][keep]            # (Ng,2)
+        gt_vis_kept    = tgt["visibility"][keep].float() if "visibility" in tgt else None
 
-        # point (L1, mask by vis)
-        l1 = F.l1_loss(pred_pts, gt_pts, reduction="none").sum(dim=1)   # (n,)
-        denom = vis.sum().clamp(min=1.0)
-        loss_point = loss_point + (l1 * vis).sum() / denom
+        # ---- (A) classification for all queries ----
+        target_classes = torch.full((Q,), no_object, dtype=torch.long, device=device)
 
-        # visibility (always computed)
-        loss_vis = loss_vis + F.binary_cross_entropy_with_logits(pred_vis, vis)
+        if n_match > 0:
+            # IMPORTANT: use kept arrays, then index by tgt_idx
+            gt_labels = gt_labels_kept[tgt_idx].long()      # (n_match,) in {0,1}
+            target_classes[src_idx] = gt_labels
 
-        num += 1
+        loss_cls_sum = loss_cls_sum + F.cross_entropy(pred_logits[b], target_classes)
 
-    if num > 0:
-        loss_cls   = loss_cls / num
-        loss_point = loss_point / num
-        loss_vis   = loss_vis / num
+        # ---- (B) point regression only for matched ----
+        if n_match > 0:
+            gt_pts   = gt_points_kept[tgt_idx]              # (n,2) in [0,1]
+            pred_pts = pred_points[b, src_idx]              # (n,2) in [0,1]
+            l1 = F.l1_loss(pred_pts, gt_pts, reduction="none").sum(dim=1)  # (n,)
+            loss_point_sum = loss_point_sum + l1.sum()
+            n_matched_total += n_match
 
+        # ---- (C) visibility: matched + unmatched (strict as your figure) ----
+        if n_match > 0:
+            if gt_vis_kept is not None:
+                vis_tgt_m = gt_vis_kept[tgt_idx]            # (n,) usually all 1
+            else:
+                vis_tgt_m = torch.ones((n_match,), device=device)
 
+            vis_pred_m = pred_vislogits[b, src_idx].view(-1)
+            loss_vis_matched_sum = loss_vis_matched_sum + F.binary_cross_entropy_with_logits(
+                vis_pred_m, vis_tgt_m, reduction="sum"
+            )
+
+        unmatched_mask = torch.ones((Q,), dtype=torch.bool, device=device)
+        if n_match > 0:
+            unmatched_mask[src_idx] = False
+
+        vis_pred_u = pred_vislogits[b, unmatched_mask].view(-1)  # (#u,)
+        if vis_pred_u.numel() > 0:
+            vis_tgt_u = torch.zeros_like(vis_pred_u)
+            loss_vis_unmatched_sum = loss_vis_unmatched_sum + F.binary_cross_entropy_with_logits(
+                vis_pred_u, vis_tgt_u, reduction="sum"
+            )
+            n_unmatched_total += int(vis_pred_u.numel())
+
+    # ---- normalize ----
+    loss_cls = loss_cls_sum / max(B, 1)
+
+    if n_matched_total > 0:
+        loss_point = loss_point_sum / float(n_matched_total)
+        loss_vis_matched = loss_vis_matched_sum / float(n_matched_total)
+    else:
+        loss_point = zero
+        loss_vis_matched = zero
+
+    if n_unmatched_total > 0:
+        loss_vis_unmatched = loss_vis_unmatched_sum / float(n_unmatched_total)
+    else:
+        loss_vis_unmatched = zero
+
+    loss_vis = loss_vis_matched + alpha * loss_vis_unmatched
     total = w_cls * loss_cls + w_point * loss_point + w_vis * loss_vis
 
     return {
@@ -85,4 +118,8 @@ def compute_detr_point_loss(outputs, targets, indices,
         "loss_cls": loss_cls,
         "loss_point": loss_point,
         "loss_vis": loss_vis,
+        "loss_vis_matched": loss_vis_matched,
+        "loss_vis_unmatched": loss_vis_unmatched,
+        "n_matched": torch.tensor(float(n_matched_total), device=device),
+        "n_unmatched": torch.tensor(float(n_unmatched_total), device=device),
     }

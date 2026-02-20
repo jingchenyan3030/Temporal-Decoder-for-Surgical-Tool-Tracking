@@ -2,13 +2,6 @@ import os, csv, json
 import numpy as np
 import cv2
 import re
-
-
-
-
-
-
-
 import os, json
 from collections import Counter
 def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
@@ -19,8 +12,8 @@ def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
     pred_set = set(pred_keys)
 
     common = sorted(gt_set & pred_set)
-    dropped_pred = sorted(pred_set - gt_set)   # pred 有但 GT 没 -> 会被过滤
-    missing_pred = sorted(gt_set - pred_set)   # GT 有但 pred 没
+    dropped_pred = sorted(pred_set - gt_set)   
+    missing_pred = sorted(gt_set - pred_set)   
 
     def get_video(k):
         k = k.replace("\\", "/")
@@ -36,7 +29,7 @@ def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
     missing_path = os.path.join(dump_dir, f"{case_name}_missing_pred.json")
     summary_path = os.path.join(dump_dir, f"{case_name}_keydiff_summary.json")
 
-    # 1) dropped_pred.json：只存 dropped_pred + 分组统计
+  
     dropped_obj = {
         "case": case_name,
         "counts": {
@@ -47,12 +40,12 @@ def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
             "coverage_common_over_gt": float(len(common) / (len(gt_set) + 1e-8)),
         },
         "dropped_pred_by_video": dict(drop_cnt),
-        "dropped_pred_keys": dropped_pred,  # 全量
+        "dropped_pred_keys": dropped_pred,  
     }
     with open(dropped_path, "w", encoding="utf-8") as f:
         json.dump(dropped_obj, f, indent=2)
 
-    # 2) missing_pred.json：只存 missing_pred + 分组统计
+ 
     missing_obj = {
         "case": case_name,
         "counts": {
@@ -62,12 +55,12 @@ def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
             "missing_pred": len(missing_pred),
         },
         "missing_pred_by_video": dict(miss_cnt),
-        "missing_pred_keys": missing_pred,  # 全量
+        "missing_pred_keys": missing_pred,  
     }
     with open(missing_path, "w", encoding="utf-8") as f:
         json.dump(missing_obj, f, indent=2)
 
-    # 3) 可选：summary.json（很小，终端也会打印这里的信息）
+  
     summary_obj = {
         "case": case_name,
         "gt": len(gt_set),
@@ -84,7 +77,7 @@ def dump_dropped_missing_json(gt_dict, pred_norm, case_name, dump_dir):
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary_obj, f, indent=2)
 
-    # 终端只打印摘要 + 路径
+
     print("\n========== KEY DIFF SUMMARY ==========")
     print("[case]", case_name)
     print("GT =", len(gt_set), "Pred =", len(pred_set), "Common =", len(common))

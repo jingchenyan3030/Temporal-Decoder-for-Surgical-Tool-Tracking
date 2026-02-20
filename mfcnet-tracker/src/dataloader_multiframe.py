@@ -2,10 +2,6 @@ import cv2
 import torch 
 import numpy as np 
 import sys; sys.path.append('./')
-
-from src.dataset_miccai2015 import MICCAI2015
-from src.dataset_miccai17 import MICCAI2017
-from src.dataset_jigsaws import JIGSAWS
 from src.dataset_ACT import ACT
 from src.dataset_KPT import KPT
 from src.dataset_KPT_copy import KPT_test
@@ -15,7 +11,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 import torchvision.transforms.functional as tF
 
-from utils.dataloader_utils import get_MICCAI2015_dataset_filenames, get_MICCAI2017_dataset_filenames, get_JIGSAWS_dataset_filenames, get_ACT_dataset_filenames, get_KPT_dataset_filenames 
+from utils.dataloader_utils import  get_ACT_dataset_filenames, get_KPT_dataset_filenames 
 
 class to_tensor(object): 
     def __call__(self, sample): 
@@ -39,6 +35,8 @@ class to_tensor(object):
             tensor_dict['visibility'] = sample['visibility']
         if 'sam' in sample and sample['sam'] is not None:
             tensor_dict['sam'] = torch.from_numpy(sample['sam'].astype(np.float32)).unsqueeze(0)
+        if 'valid' in sample:
+            tensor_dict['valid'] = torch.as_tensor(sample['valid'], dtype=torch.bool)
         return tensor_dict
     
 class customResize(object):
@@ -50,7 +48,6 @@ class customResize(object):
             self.img_size = img_size
         else:
             raise TypeError
-        self.img_size = img_size 
     
     def __call__(self, sample): 
         input = sample['input'] 
@@ -76,9 +73,12 @@ class customResize(object):
             sy = float(H_new) / float(H_old)
             pts[:, 0] = pts[:, 0] * sx
             pts[:, 1] = pts[:, 1] * sy
+            pts[:,0] = pts[:,0] / float(W_new-1) if W_new > 1 else pts[:,0]
+            pts[:,1] = pts[:,1] / float(H_new-1) if H_new > 1 else pts[:,1]
             resized_dict['points'] = pts
             resized_dict['labels'] = sample['labels']
             resized_dict['visibility'] = sample['visibility']
+            resized_dict['valid'] = sample['valid']
         if 'sam' in sample and sample['sam'] is not None:
             resized_dict['sam'] = transforms.Resize(
                 self.img_size, interpolation=tF.InterpolationMode.NEAREST
@@ -102,7 +102,7 @@ class customRandomRotate(object):
             for depth in input_depth:
                 rotated_dict['input_depth'].append(tF.rotate(depth, angle))
         if 'sam' in sample and sample['sam'] is not None:
-            rotated_dict['sam'] = tF.rotate(sample['sam'], angle)
+            rotated_dict['sam'] = tF.rotate(sample['sam'], angle, interpolation=tF.InterpolationMode.NEAREST)
 
         return rotated_dict
 
@@ -249,7 +249,8 @@ class customNormalize(object):
             normalized_dict['visibility'] = sample['visibility']
         if 'sam' in sample and sample['sam'] is not None:
             normalized_dict['sam'] = sample['sam']
-
+        if 'valid' in sample:
+            normalized_dict['valid'] = sample['valid']
         return normalized_dict
 
 # New Adding for DETR:
@@ -272,8 +273,8 @@ def get_act_transform(mode, args):
     if mode == 'train':
         transform_list = [
             to_tensor(),
-            customRandomRotate(),          # 轻微旋转增强
-            customRandomHSVDistortion(p=0.3),  # 控制颜色增强概率
+            customRandomRotate(),         
+            customRandomHSVDistortion(p=0.3),  
             customResize((args.input_height, args.input_width)),
             customNormalize()
         ]
@@ -306,98 +307,7 @@ def get_transform(mode, args):
     return transforms.Compose(transform_list)
 
 def get_data_loader(args): 
-    if args.dataset == 'MICCAI2017': 
-        if args.mode == 'training': 
-            train_file_names, val_file_names = get_MICCAI2017_dataset_filenames(args) 
-            train_transform = get_transform('train', args)
-            val_transform = get_transform('val', args)
-            train_dataset = MICCAI2017(train_file_names, train_transform, 
-                                       mode=args.mode, prediction_task=args.prediction_task, 
-                                       num_input_frames=args.num_input_frames, 
-                                       num_frames_per_video=args.num_frames_per_video)
-            val_dataset = MICCAI2017(val_file_names, val_transform, 
-                                     mode=args.mode, prediction_task=args.prediction_task,
-                                     num_input_frames=args.num_input_frames,
-                                     num_frames_per_video=args.num_frames_per_video)
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, 
-                                      shuffle=True, num_workers=args.num_workers, pin_memory=True)
-            val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, 
-                                    num_workers=args.num_workers, pin_memory=True)
-            return train_loader, val_loader
-        else: 
-            test_file_names, _ = get_MICCAI2017_dataset_filenames(args)
-            test_transform = get_transform('test', args)
-            test_dataset = MICCAI2017(test_file_names, test_transform, 
-                                      mode=args.mode, prediction_task=args.prediction_task,
-                                     num_input_frames=args.num_input_frames, 
-                                     num_frames_per_video=args.num_frames_per_video)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
-                                    num_workers=args.num_workers, pin_memory=True)
-            return None, test_loader
-    elif args.dataset == 'MICCAI2015':
-        if args.mode == 'training': 
-            train_file_names, val_file_names = get_MICCAI2015_dataset_filenames(args)
-            train_transform = get_transform('train', args)
-            val_transform = get_transform('val', args)
-            train_dataset = MICCAI2015(train_file_names, train_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
-                                    num_frames_per_video=args.num_frames_per_video, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            val_dataset = MICCAI2015(val_file_names, val_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
-                                    num_frames_per_video=76, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
-                                    shuffle=True, num_workers=args.num_workers, pin_memory=True)
-            val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
-                                    num_workers=args.num_workers, pin_memory=True)
-            return train_loader, val_loader
-        if args.mode == 'testing': 
-            test_file_names, _ = get_MICCAI2015_dataset_filenames(args)
-            test_transform = get_transform('test', args)
-            test_dataset = MICCAI2015(test_file_names, test_transform, 
-                                      mode=args.mode, prediction_task=args.prediction_task,
-                                     num_input_frames=args.num_input_frames, 
-                                     num_frames_per_video=args.num_frames_per_video, 
-                                     add_depth_inputs=args.add_depth_inputs)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
-                                    num_workers=args.num_workers, pin_memory=True)
-            return None, test_loader
-    elif args.dataset == 'JIGSAWS': 
-        if args.mode == 'training':
-            train_file_names, val_file_names = get_JIGSAWS_dataset_filenames(args)
-            train_transform = get_transform('train', args)
-            val_transform = get_transform('val', args)
-            train_dataset = JIGSAWS(train_file_names, train_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
-                                    num_frames_per_video=args.num_frames_per_video, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            val_dataset = JIGSAWS(val_file_names, val_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
-                                    num_frames_per_video=args.num_frames_per_video, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size,
-                                    shuffle=True, num_workers=args.num_workers, pin_memory=True)
-            val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
-                                    num_workers=args.num_workers, pin_memory=True)
-            return train_loader, val_loader
-        else:
-            test_file_names, _ = get_JIGSAWS_dataset_filenames(args)
-            test_transform = get_transform('test', args)
-            test_dataset = JIGSAWS(test_file_names, test_transform, 
-                                      mode=args.mode, prediction_task=args.prediction_task,
-                                     num_input_frames=args.num_input_frames, 
-                                     num_frames_per_video=args.num_frames_per_video, 
-                                     add_depth_inputs=args.add_depth_inputs)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
-                                    num_workers=args.num_workers, pin_memory=True)
-            return None, test_loader
-        
-    elif args.dataset == 'ACT':
+    if args.dataset == 'ACT':
         if args.mode == 'training': 
             train_file_names, val_file_names = get_ACT_dataset_filenames(args)
             train_transform = get_act_transform('train', args)

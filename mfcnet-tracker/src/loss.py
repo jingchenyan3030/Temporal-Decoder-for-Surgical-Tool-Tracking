@@ -46,8 +46,30 @@ class LossMSE:
         loss = diff.mean()
 
         return loss
+'''
+class LossMSE:
+    def __init__(self, beta=1.0, eps=1e-6):
+        self.beta = beta
+        self.eps = eps
 
-    
+    def __call__(self, outputs, targets, sam=None):
+
+        diff = (outputs - targets)**2
+
+        if sam is None:
+            return diff.mean()
+
+        if sam.dim()==3:
+            sam = sam.unsqueeze(1)
+
+        sam = (sam > 0).float()
+
+        weight = 1 + self.beta * sam
+
+        loss = (diff * weight).mean()
+
+        return loss
+'''
 class LossNLL: 
     def __init__(self, class_weights=None, num_classes=1):
         if class_weights is not None:

@@ -1,5 +1,3 @@
-# written by Chenyan
-import math
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,61 +7,9 @@ from torchvision.models.segmentation.deeplabv3 import DeepLabHead
 from torchvision.models.segmentation.fcn import FCNHead
 from segmentation_models_pytorch import Segformer
 from hrnet import HighResolutionNet
-from detr_decoder import DETRDecoder, DETRDecoderLayer
 
 import torch
 import torch.nn as nn
-
-
-# position encoding module
-
-class PositionEmbeddingSine(nn.Module):
-    """
-    Standard 2D sine-cos positional encoding (DETR-style).
-    Output: (B, C, H, W) where C = 2*num_pos_feats*2? (actually 2*num_pos_feats*2 if both x/y)
-    Here C = 2 * num_pos_feats * 2? No: it becomes 2*num_pos_feats*2?? Let's be explicit below.
-    """
-    def __init__(self, num_pos_feats=128, temperature=10000, normalize=True, scale=None):
-        super().__init__()
-        self.num_pos_feats = num_pos_feats
-        self.temperature = temperature
-        self.normalize = normalize
-        self.scale = scale if scale is not None else 2 * math.pi
-
-    def forward(self, x):
-        # x: (B, C, H, W)
-        B, _, H, W = x.shape
-        device = x.device
-
-        mask = torch.zeros((B, H, W), dtype=torch.bool, device=device)  # no padding mask
-        not_mask = ~mask
-
-        y_embed = not_mask.cumsum(1, dtype=torch.float32)
-        x_embed = not_mask.cumsum(2, dtype=torch.float32)
-
-        if self.normalize:
-            eps = 1e-6
-            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
-            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
-
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=device)
-        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
-
-        pos_x = x_embed[:, :, :, None] / dim_t  # (B,H,W,F)
-        pos_y = y_embed[:, :, :, None] / dim_t
-
-        pos_x = torch.stack((pos_x[..., 0::2].sin(), pos_x[..., 1::2].cos()), dim=4).flatten(3)
-        pos_y = torch.stack((pos_y[..., 0::2].sin(), pos_y[..., 1::2].cos()), dim=4).flatten(3)
-
-        # (B,H,W,2F) + (B,H,W,2F) -> (B,H,W,4F) ??? actually each becomes F, so concat -> 2F
-        pos = torch.cat((pos_y, pos_x), dim=3)  # (B,H,W,2*num_pos_feats)
-        pos = pos.permute(0, 3, 1, 2).contiguous()  # (B, 2*num_pos_feats, H, W)
-        return pos
-
-
-
-
-
 
 class MultiFrameNetBase(nn.Module):
     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
@@ -88,23 +34,13 @@ class MultiFrameNetBase(nn.Module):
     def forward(self, x):
         raise NotImplementedError("This is a base class. Use MultiFrameNetBasic or MultiFrameNetLarge.")
 
-# class MultiFrameNetBasic(MultiFrameNetBase):
-#     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
-#         super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
-
-#         self.multiframe_net = nn.Sequential(
-#             nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
-#             nn.BatchNorm2d(self.num_frames * self.num_classes), 
-#             nn.ReLU(),
-#             nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
-#         )
-
-#     def forward(self, x):
-#         return self.multiframe_net(x)
 
 class MultiFrameNetBasic(MultiFrameNetBase):
     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
         super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
+        self.in_channels = num_classes * num_frames
+        if with_depth:
+            self.in_channels += num_frames
         self.num_classes = num_classes
         self.num_frames = num_frames
         self.with_optflow = with_optflow
@@ -122,17 +58,18 @@ class MultiFrameNetBasic(MultiFrameNetBase):
             nn.ReLU(),
             nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
         )
-        # self.multiframe_net = nn.Sequential(
-        #     nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
-        #     nn.BatchNorm2d(self.num_frames * self.num_classes), 
-        #     nn.ReLU(),
-        #     nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
-        # )
 
         # Register the mesh grid as a buffer
         self.register_buffer('grid', self._create_mesh_grid())
 
-    def forward(self, x):
+    def forward(self, x, sam =None, alpha=0.2):
+        if sam is not None:
+            sam = sam.float() # B,1,H,W
+            w = alpha + (1-alpha) * sam
+            x_sequence = x[:, :self.num_frames * self.num_classes, :, :] * w
+            x_rest = x[:, self.num_frames * self.num_classes:, :, :] 
+            x = torch.cat((x_sequence, x_rest), dim=1) if x_rest.numel() > 0 else x_sequence     
+        
         if self.with_optflow:
             x = self.warp_segmentation_and_depth(x)
         return self.multiframe_net(x)
@@ -227,7 +164,7 @@ class MultiFrameNetBasic(MultiFrameNetBase):
         Returns:
             torch.Tensor: Mesh grid of shape (1, 2, H, W).
         """
-        H, W = 256, 320  # Default size, will be cropped/resized as needed
+        H, W = 576, 720  # Default size, will be cropped/resized as needed
         y, x = torch.meshgrid(torch.arange(0, H), torch.arange(0, W))
         grid_y = 2.0 * y / (H - 1) - 1.0
         grid_x = 2.0 * x / (W - 1) - 1.0
@@ -239,39 +176,21 @@ class MultiFrameNetLarge(MultiFrameNetBase):
     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
         super(MultiFrameNetLarge, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
 
-        self.feature_net = nn.Sequential(
-            nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, padding=5, bias=False),
+        self.multiframe_net = nn.Sequential(
+            nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
+            nn.BatchNorm2d(self.num_frames * self.num_classes), 
+            nn.ReLU(),
+            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(self.num_frames * self.num_classes),
             nn.ReLU(),
-            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(self.num_frames * self.num_classes),
             nn.ReLU(),
-            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(self.num_frames * self.num_classes),
-            nn.ReLU(),
+            nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
         )
 
-        self.head = nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, bias=False)
-
-
-    def forward(self, x, return_feat=False, return_seg=False):
-        if self.with_optflow:
-            x = self.warp_segmentation_and_depth(x)
-
-        feat = self.feature_net(x)
-
-        seg = None
-        if return_seg:
-            seg = self.head(feat)
-
-        if return_feat and return_seg:
-            return feat, seg
-        if return_seg:
-            return seg
-        if return_feat:
-            return feat
-
-        return self.head(feat)
+    def forward(self, x):
+        return self.multiframe_net(x)
 
 class TernausNetMultiBasic(nn.Module):
     def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False): 
@@ -287,13 +206,13 @@ class TernausNetMultiBasic(nn.Module):
         else:
             self.base_model = TernausNet16(num_classes=1*self.num_classes, num_filters=64, pretrained=self.pretrained)
             has_base_preframe_model_trained = False
-        self.multiframe_net = MultiFrameNetLarge(self.num_classes, self.num_frames, has_base_preframe_model_trained,
+        self.multiframe_net = MultiFrameNetBasic(self.num_classes, self.num_frames, has_base_preframe_model_trained,
                                             with_optflow=self.optflow_inputs, with_depth=self.depth_inputs)
     
-    def forward(self, x, optflow=None, depth=None):
+    def forward(self, x, optflow=None, depth=None, sam=None, alpha=0.2):
         y_output = []
         for x_img in x: 
-            y_img = self.base_model(x_img).exp()
+            y_img = self.base_model(x_img)
             y_output.append(y_img)                  # B x 2N_c x H x W
         if optflow is not None: 
             for optflow_img in optflow: 
@@ -303,9 +222,9 @@ class TernausNetMultiBasic(nn.Module):
                 y_output.append(depth_img)          # Add N_f depth images
         
         y_output = torch.cat(y_output, dim=1)       # B x H x W
-        feat = self.multiframe_net(y_output, return_feat=True)
-        out  = self.multiframe_net.head(feat)   
-        return out, feat  # feat: (B, C_feat, H, W), C_feat = N_f * N_c: num_frames * num_classes = 8 * 2 = 16
+        y_output = self.multiframe_net(y_output, sam =sam, alpha=alpha)    # B x N_c x H x W
+        y_output = torch.sigmoid(y_output)
+        return y_output
 
 class TernausNetMultiLarge(nn.Module):
     def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False):
@@ -327,7 +246,7 @@ class TernausNetMultiLarge(nn.Module):
     def forward(self, x, optflow=None, depth=None):
         y_output = []
         for x_img in x: 
-            y_img = self.base_model(x_img).exp()
+            y_img = self.base_model(x_img)
             y_output.append(y_img)                  # B x 2N_c x H x W
         if optflow is not None: 
             for optflow_img in optflow: 
@@ -337,100 +256,8 @@ class TernausNetMultiLarge(nn.Module):
                 y_output.append(depth_img)          # Add N_f depth images
         
         y_output = torch.cat(y_output, dim=1)       # B x H x W
-        y_output = self.multiframe_net(y_output)    # B x N_c x H x W
+        y_output = self.multiframe_net(y_output, sam=None, alpha=0.2)    # B x N_c x H x W
         return y_output
-
-
-# DETR-based multi-frame segmentation models
-class TernusNetMultiDETRBasic(nn.Module):
-    def __init__(self, num_classes, num_frames, d_model=256, num_queries=3, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False):
-        super(TernusNetMultiDETRBasic, self).__init__()
-        self.num_classes = num_classes
-        self.num_frames = num_frames
-        self.pretrained = pretrained
-        self.optflow_inputs = optflow_inputs
-        self.depth_inputs = depth_inputs
-        if loadpath is not None:
-            self.base_model = TernausNet16(num_classes=self.num_classes, num_filters=64, pretrained=self.pretrained)
-            has_base_preframe_model_trained = True
-        else:
-            self.base_model = TernausNet16(num_classes=1*self.num_classes, num_filters=64, pretrained=self.pretrained)
-            has_base_preframe_model_trained = False
-        self.multiframe_net = MultiFrameNetLarge(self.num_classes, self.num_frames, has_base_preframe_model_trained,
-                                            with_optflow=self.optflow_inputs, with_depth=self.depth_inputs)
-        # proj
-        C_feat = self.num_frames * self.num_classes
-        self.proj = nn.Conv2d(C_feat, d_model, kernel_size=1)
-        # DETR decoder
-        self.query_embed = nn.Embedding(num_queries, d_model)
-        decoder_layer = DETRDecoderLayer(d_model=d_model, nhead=8, dim_feedforward=2048, dropout=0.1)
-        self.decoder = DETRDecoder(
-            decoder_layer=decoder_layer,
-            num_layers=6,
-            norm=nn.LayerNorm(d_model),
-            return_intermediate=False
-        )
-  
-        # point regression head
-        self.point_head = nn.Linear(d_model, 2)  # x, y
-        self.num_obj_classes = 2  # anchor, tip
-        self.class_head = nn.Linear(d_model, self.num_obj_classes + 1)
-        self.visibility_head = nn.Linear(d_model,1)  # visible or not
-        self.pos_embed = PositionEmbeddingSine(num_pos_feats=d_model // 2, normalize=True)
-        for p in self.multiframe_net.head.parameters():
-            p.requires_grad_(False)
-
-    def forward(self, x, optflow=None, depth=None, prev_hs = None):
-        y_output = []
-        for x_img in x:
-            y_img = self.base_model(x_img).exp()
-            y_output.append(y_img)
-
-        if optflow is not None:
-            y_output.extend(optflow)
-        if depth is not None:
-            y_output.extend(depth)
-
-        y_output = torch.cat(y_output, dim=1)  # (B, C_feat, H, W)
-        # 2. multi-frame fusion feature
-
-        feat = self.multiframe_net(y_output, return_feat=True, return_seg=False) # feat: (B, C_feat, H, W)
-        # 3. proj to d_model
-        feat = self.proj(feat)                 # (B, d_model, H, W)
-        # 4. flatten to DETR memory
-        B, C, H, W = feat.shape
-        memory = feat.flatten(2).permute(2, 0, 1)  # (HW, B, d_model)
-        # 5. queries
-        pos = self.pos_embed(feat)                         # (B, d_model, H, W)
-        pos = pos.flatten(2).permute(2, 0, 1)              # (HW, B, d_model)
-        query_pos = self.query_embed.weight.unsqueeze(1).repeat(1, B, 1)
-        '''
-        # Add previous hidden states if available (extra for detr)
-        if prev_hs is None:
-            tgt = torch.zeros_like(query_pos)
-        else:
-            #prev_hs: (B,Q,D) --> (Q,B,D)
-            tgt = prev_hs.permute(1,0,2).contiguous()
-        '''
-        tgt = torch.zeros_like(query_pos)  # (Q, B, d_model)
-        # 6. DETR decoder
-        hs = self.decoder(tgt, memory, query_pos=query_pos, pos=pos)  # (Q, B, d_model)
-        hs = hs.permute(1, 0, 2).contiguous()                            # (B, Q, d_model)
-
-        # resize
-        H_in, W_in = x[0].shape[-2], x[0].shape[-1]
-        pred_points01 = self.point_head(hs).sigmoid()  # (B,Q,2) in [0,1]
-
-
-        out = {
-            "pred_logits": self.class_head(hs),  # (B, Q, 3)
-            "pred_points": pred_points01,  # (B, Q, 2)
-            "pred_visibility": self.visibility_head(hs).squeeze(-1),  # (B, Q)
-        }
-        return out, hs  # hs: (B, Q, d_model)
-
-
-
 
 class DeepLabMultiBasic(nn.Module):
     def __init__(self, num_classes=2, num_frames=1, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False):

@@ -1,5 +1,6 @@
 """
 Script for running inference for mse heatmap models 
+written by Chenyan
 """
 
 import os 
