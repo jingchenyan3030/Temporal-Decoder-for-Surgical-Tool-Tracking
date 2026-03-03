@@ -4,8 +4,8 @@ Configuration file stating all the args for multi-frame segmentation task
 
 def train_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--data_dir', type=str, default='/data/home/hao/chenyan/data/0923_by_action', 
-                        help='Path to data directory. Default: /data/home/hao/chenyan/data/0923_by_action')
+    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
+                        help='Path to data directory. Default: /home/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT','ACT'],
                         help='Dataset name. Default: KPT')
     parser.add_argument('--fold_index', type=int, default=-1, choices=[-1,0,1,2,3], 
@@ -21,8 +21,8 @@ def train_config_parser(parser):
                         help='Mode of operation. Default: clip')
 
     # I/O related arguments
-    parser.add_argument('--expt_savedir', type=str, default='/data/home/hao/chenyan/checkpoint', 
-                        help='Path to save experiment results. Default: /data/home/hao/chenyan/checkpoint')
+    parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
+                        help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
     parser.add_argument('--expt_name', type=str, default='multiframe_segmentation_expt_kpt_clip_detr',
                         help='Experiment name. Default: multiframe_segmentation_expt_kpt_clip_detr')
     parser.add_argument('--print_freq', type=int, default=1, 

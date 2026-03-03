@@ -49,7 +49,7 @@ def sanitize_points(points, visibility, H, W, *, oob_policy="invalidate"):
     return pts, vis
 
 
-class KPT_test_mid(Dataset):
+class KPT_track_mid(Dataset):
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ class KPT_test_mid(Dataset):
             sam = np.load(str(sam_path)).astype(np.float32)
             sam = (sam > 0).astype(np.float32)
         elif self.prediction_task == 'detr_keypoint':
-            TIP_LABEL =  "tool_tip"
+            TIP_LABEL = "tool_tip"
             ANCHOR_LABEL = "tool_anchor"
             CONTACT_LABEL = "contact"
 
@@ -169,54 +169,49 @@ class KPT_test_mid(Dataset):
             json_path = detr_dir / (img_t.stem + ".json")
             if not json_path.exists():
                 raise FileNotFoundError(f"Missing DETR points: {json_path}")
+
             with open(json_path, 'r') as f:
                 plist = json.load(f)
             if not isinstance(plist, list):
                 raise ValueError(f"DETR points file corrupted: {json_path}")
-            
-            pts_all = []
-            lab_all = []
-            vis_all = []
+
+            # fixed slots by idx: 0,1,2
+            Q = 3
+            points = torch.zeros(Q, 2, dtype=torch.float32)
+            visibility = torch.zeros(Q, dtype=torch.float32)
+            labels = torch.zeros(Q, dtype=torch.long)  # tip=0, anchor=1 (optional)
 
             for p in plist:
                 lab = p.get("label", "")
                 if lab == CONTACT_LABEL:
                     continue
 
-                if lab == TIP_LABEL:
-                    lab_id = 0
-                elif lab == ANCHOR_LABEL:
-                    lab_id = 1
-                else:
+                sid = p.get("idx", None)
+                if sid is None:
+                    continue
+                sid = int(sid)
+
+                if sid < 0 or sid >= Q:
                     continue
 
                 x = float(p["x"])
                 y = float(p["y"])
                 v = 1.0 if bool(p.get("visibility", True)) else 0.0
 
-                pts_all.append([x, y])
-                lab_all.append(lab_id)
-                vis_all.append(v)
+                # fill slot
+                points[sid, 0] = x
+                points[sid, 1] = y
+                visibility[sid] = v
 
-                if len(pts_all) > 3:
-                    raise ValueError(f"[Too many points] {json_path} got {len(pts_all)} (>3)")
-
-
-            while len(pts_all) < 3:
-                pts_all.append([0.0, 0.0])
-                vis_all.append(0.0)
-                lab_all.append(0) 
-
-            assert len(pts_all) == len(lab_all) == len(vis_all), (f"Length mismatch in {json_path}: pts={len(pts_all)} "f"lab={len(lab_all)} vis={len(vis_all)}")
-
-
-            points = torch.tensor(pts_all, dtype=torch.float32)     
-            labels = torch.tensor(lab_all, dtype=torch.long)        
-            visibility = torch.tensor(vis_all, dtype=torch.float32)
+                if lab == TIP_LABEL:
+                    labels[sid] = 0
+                elif lab == ANCHOR_LABEL:
+                    labels[sid] = 1
 
             img0 = load_image(img_t)
             H, W = img0.shape[:2]
             mask = np.zeros((1, H, W), dtype=np.float32)
+
             points, visibility = sanitize_points(points, visibility, H, W, oob_policy="invalidate")
         else:
             mask = load_mask(img_t, self.prediction_task)

@@ -1,5 +1,6 @@
 """
 written by Chenyan
+# train segmentation to classify each pixel into 4 classes: background, tip, anchor, contact
 """
 
 import os 

@@ -14,7 +14,11 @@ from pathlib import Path
 # segmemtation model config parser
 #from configs.config_multiframe import train_config_parser as config_parser
 # mse model config parser
-from configs.config_mse import train_config_parser as config_parser
+#from configs.config_mse import train_config_parser as config_parser
+# detr model config parser
+from configs.config_track import train_config_parser as config_parser
+
+
 import tqdm, time, math, random
 import cv2 
 import numpy as np
@@ -31,7 +35,7 @@ from torchvision import transforms
 
 import matplotlib.pyplot as plt
 from src.dataloader_multiframe import get_data_loader
-from src.engine import train_one_epoch, validate
+from src.engine_track import train_one_epoch, validate
 from models import get_multiframe_segmentation_model as get_model
 from utils.log_utils import AverageMeter, ProgressMeter, init_logging
 from utils.model_utils import load_model_weights, save_model
@@ -70,8 +74,9 @@ def main():
 
 
 def main_worker(args):
-    assert len(args.loss_fns) == len(args.loss_wts), "Number of loss functions and loss weights should be equal"
-    assert len(args.loss_fns) > 0, "At least one loss function should be specified"
+    if args.prediction_task != 'detr_keypoint':
+        assert len(args.loss_fns) == len(args.loss_wts), "Number of loss functions and loss weights should be equal"
+        assert len(args.loss_fns) > 0, "At least one loss function should be specified"
     if args.prediction_task != 'keypoint_heatmap':
         assert len(args.class_weights) == args.num_classes, "Number of class weights should be equal to number of classes"
         args.class_weights = np.array(args.class_weights)
@@ -145,25 +150,29 @@ def main_worker(args):
         logging.info("No model weights loaded")
 
     model = model.cuda(args.local_rank)
+    for i, (n, p) in enumerate(model.named_parameters()):
+        if i == 59:
+            print(f"[DEBUG] index59 = {n}, shape={tuple(p.shape)}, requires_grad={p.requires_grad}")
+            break
     model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=False)
 
 
     # set up optimizer and scheduler
     if args.train_base_model:
-        logger.info("Training base model and multi-frame network")
-        if args.load_wts_base_model is not None:
-            optimizer = optim.Adam([{'params': model.module.base_model.parameters(), 'lr': args.lr/(100*args.num_input_frames)}, 
-                                {'params': model.module.multiframe_net.parameters()}], lr=args.lr)
-        else: 
-            optimizer = optim.Adam([{'params': model.module.base_model.parameters(), 'lr': args.lr/args.num_input_frames}, 
-                                {'params': model.module.multiframe_net.parameters()}], lr=args.lr)
+        logger.info("End to end training (base model + multi-frame network)")
+        for p in model.module.base_model.parameters():
+            p.requires_grad = True
+
+        trainable_params = [p for p in model.module.parameters() if p.requires_grad]
+        optimizer = optim.Adam(trainable_params, lr=args.lr)
     else:
         logger.info("Training multi-frame network only")
         model.module.base_model.eval()
         for param in model.module.base_model.parameters():
             param.requires_grad = False
         model.module.multiframe_net.train()
-        optimizer = optim.Adam(model.module.multiframe_net.parameters(), lr=args.lr)
+        trainable_params = [p for p in model.module.parameters() if p.requires_grad]
+        optimizer = optim.Adam(trainable_params, lr=args.lr)
     if args.scheduler=='StepDecay':
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=max(1,int(args.num_epochs/2)), gamma=0.1)
     elif args.scheduler=='Constant':

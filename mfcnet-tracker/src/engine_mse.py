@@ -1,3 +1,6 @@
+'''
+This code is not available for the pipelines.
+'''
 import time, math, random, os, sys
 import torch.distributed as dist
 import logging

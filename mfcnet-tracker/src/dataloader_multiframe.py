@@ -6,6 +6,7 @@ from src.dataset_ACT import ACT
 from src.dataset_KPT import KPT
 from src.dataset_KPT_copy import KPT_test
 from src.dataset_KPT_mid import KPT_test_mid
+from src.dataset_KPT_track import KPT_track_mid
 from torch.utils.data import DataLoader 
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
@@ -33,8 +34,8 @@ class to_tensor(object):
             tensor_dict['labels'] = sample['labels']
         if 'visibility' in sample:
             tensor_dict['visibility'] = sample['visibility']
-        if 'sam' in sample and sample['sam'] is not None:
-            tensor_dict['sam'] = torch.from_numpy(sample['sam'].astype(np.float32)).unsqueeze(0)
+        if 'sam_weight' in sample and sample['sam_weight'] is not None:
+            tensor_dict['sam_weight'] = torch.from_numpy(sample['sam_weight'].astype(np.float32))
         if 'valid' in sample:
             tensor_dict['valid'] = torch.as_tensor(sample['valid'], dtype=torch.bool)
         return tensor_dict
@@ -79,10 +80,10 @@ class customResize(object):
             resized_dict['labels'] = sample['labels']
             resized_dict['visibility'] = sample['visibility']
             resized_dict['valid'] = sample['valid']
-        if 'sam' in sample and sample['sam'] is not None:
-            resized_dict['sam'] = transforms.Resize(
+        if 'sam_weight' in sample and sample['sam_weight'] is not None:
+            resized_dict['sam_weight'] = transforms.Resize(
                 self.img_size, interpolation=tF.InterpolationMode.NEAREST
-            )(sample['sam'])
+            )(sample['sam_weight'])
 
         return resized_dict
 
@@ -101,8 +102,9 @@ class customRandomRotate(object):
             rotated_dict['input_depth'] = []
             for depth in input_depth:
                 rotated_dict['input_depth'].append(tF.rotate(depth, angle))
-        if 'sam' in sample and sample['sam'] is not None:
-            rotated_dict['sam'] = tF.rotate(sample['sam'], angle, interpolation=tF.InterpolationMode.NEAREST)
+
+        if 'sam_weight' in sample and sample['sam_weight'] is not None:
+            rotated_dict['sam_weight'] = tF.rotate(sample['sam_weight'], angle, interpolation=tF.InterpolationMode.NEAREST)
 
         return rotated_dict
 
@@ -126,9 +128,9 @@ class customRandomHSVDistortion(object):
             distorted_dict['input'] = input
         if 'input_depth' in sample: 
             input_depth = sample['input_depth']
-            distorted_dict['input_depth'] = input_depth
-        if 'sam' in sample and sample['sam'] is not None:
-            distorted_dict['sam'] = sample['sam']    
+            distorted_dict['input_depth'] = input_depth 
+        if 'sam_weight' in sample and sample['sam_weight'] is not None:
+            distorted_dict['sam_weight'] = sample['sam_weight']
         return distorted_dict
 
 class customHorizontalFlip(object): 
@@ -247,8 +249,8 @@ class customNormalize(object):
             normalized_dict['labels'] = sample['labels']
         if 'visibility' in sample:
             normalized_dict['visibility'] = sample['visibility']
-        if 'sam' in sample and sample['sam'] is not None:
-            normalized_dict['sam'] = sample['sam']
+        if 'sam_weight' in sample and sample['sam_weight'] is not None:
+            normalized_dict['sam_weight'] = sample['sam_weight']
         if 'valid' in sample:
             normalized_dict['valid'] = sample['valid']
         return normalized_dict
@@ -342,69 +344,126 @@ def get_data_loader(args):
 
 
     elif args.dataset == "KPT":
-        if args.mode == 'training': 
-            train_file_names, val_file_names = get_KPT_dataset_filenames(args)
-            if args.prediction_task == 'detr_keypoint':
-                train_transform = get_kpt_detr_transform('train', args)
-                val_transform = get_kpt_detr_transform('val', args)
-            else:
+        if args.track == 0:
+            if args.mode == 'training': 
+                train_file_names, val_file_names = get_KPT_dataset_filenames(args)
+                if args.prediction_task == 'detr_keypoint':
+                    train_transform = get_kpt_detr_transform('train', args)
+                    val_transform = get_kpt_detr_transform('val', args)
+                else:
+                    train_transform = get_act_transform('train', args)
+                    val_transform = get_act_transform('val', args)
+                train_dataset = KPT_test_mid(train_file_names, train_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
+                                    # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                val_dataset = KPT_test_mid(val_file_names, val_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                
+                world_size = getattr(args, 'world_size', 1)
+                global_rank = getattr(args, 'global_rank', 0)
+                if world_size > 1:
+                    train_sampler = DistributedSampler(
+                        train_dataset,
+                        num_replicas=world_size,
+                        rank=global_rank,
+                        shuffle=True
+                    )
+                    shuffle_train = False
+
+                    val_sampler = DistributedSampler(
+                        val_dataset,
+                        num_replicas=world_size,
+                        rank=global_rank,
+                        shuffle=False
+                    )
+
+                else:
+                    train_sampler = None
+                    val_sampler = None
+                    shuffle_train = True
+
+                train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
+                        sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
+
+                val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+                        sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
+                return train_loader, val_loader
+            else: 
+                test_file_names, _ = get_KPT_dataset_filenames(args)
+                if args.prediction_task == 'detr_keypoint':
+                    test_transform = get_kpt_detr_transform('test', args)
+                else:   
+                    test_transform = get_act_transform('test', args)
+                test_dataset = KPT_test_mid(test_file_names, test_transform, 
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames, 
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
+                                        num_workers=args.num_workers, pin_memory=True)
+                return None, test_loader
+            
+        else:
+            if args.mode == 'training': 
+                train_file_names, val_file_names = get_KPT_dataset_filenames(args)
                 train_transform = get_act_transform('train', args)
                 val_transform = get_act_transform('val', args)
-            train_dataset = KPT_test_mid(train_file_names, train_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
-                                   # num_frames_per_video=args.num_frames_per_video, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            val_dataset = KPT_test_mid(val_file_names, val_transform,
-                                    mode=args.mode, prediction_task=args.prediction_task,
-                                    num_input_frames=args.num_input_frames,
+                train_dataset = KPT_track_mid(train_file_names, train_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
                                     # num_frames_per_video=args.num_frames_per_video, 
-                                    add_depth_inputs=args.add_depth_inputs)
-            
-            world_size = getattr(args, 'world_size', 1)
-            global_rank = getattr(args, 'global_rank', 0)
-            if world_size > 1:
-                train_sampler = DistributedSampler(
-                    train_dataset,
-                    num_replicas=world_size,
-                    rank=global_rank,
-                    shuffle=True
-                )
-                shuffle_train = False
+                                        add_depth_inputs=args.add_depth_inputs)
+                val_dataset = KPT_track_mid(val_file_names, val_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                
+                world_size = getattr(args, 'world_size', 1)
+                global_rank = getattr(args, 'global_rank', 0)
+                if world_size > 1:
+                    train_sampler = DistributedSampler(
+                        train_dataset,
+                        num_replicas=world_size,
+                        rank=global_rank,
+                        shuffle=False
+                    )
+                    shuffle_train = False
 
-                val_sampler = DistributedSampler(
-                    val_dataset,
-                    num_replicas=world_size,
-                    rank=global_rank,
-                    shuffle=False
-                )
+                    val_sampler = DistributedSampler(
+                        val_dataset,
+                        num_replicas=world_size,
+                        rank=global_rank,
+                        shuffle=False
+                    )
 
-            else:
-                train_sampler = None
-                val_sampler = None
-                shuffle_train = True
+                else:
+                    train_sampler = None
+                    val_sampler = None
+                    shuffle_train = False
 
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
-                    sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
+                train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
+                        sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
 
-            val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
-                    sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
-            return train_loader, val_loader
-        else: 
-            test_file_names, _ = get_KPT_dataset_filenames(args)
-            if args.prediction_task == 'detr_keypoint':
-                test_transform = get_kpt_detr_transform('test', args)
-            else:   
+                val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+                        sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
+                return train_loader, val_loader
+            else: 
+                test_file_names, _ = get_KPT_dataset_filenames(args)
                 test_transform = get_act_transform('test', args)
-            test_dataset = KPT_test_mid(test_file_names, test_transform, 
-                                     mode=args.mode, prediction_task=args.prediction_task,
-                                     num_input_frames=args.num_input_frames, 
-                                     # num_frames_per_video=args.num_frames_per_video, 
-                                     add_depth_inputs=args.add_depth_inputs)
-            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
-                                    num_workers=args.num_workers, pin_memory=True)
-            return None, test_loader
-
+                test_dataset = KPT_track_mid(test_file_names, test_transform, 
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames, 
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
+                                        num_workers=args.num_workers, pin_memory=True)
+                return None, test_loader            
     else: 
         raise NotImplementedError
 

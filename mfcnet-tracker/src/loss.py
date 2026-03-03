@@ -3,12 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np 
 
-def get_loss(outputs, targets, loss_fns, loss_wts, args, sam=None):
+def get_loss(outputs, targets, loss_fns, loss_wts, args, sam_weight=None):
     loss_dict = {} 
     total_loss = 0.0
     for loss_fn, loss_wt in zip(loss_fns, loss_wts):
         if loss_fn == 'mse':
-            loss = LossMSE()(outputs, targets, sam=sam)
+            mse_loss = LossMSE()
+            loss = mse_loss(outputs, targets, sam_weight=sam_weight)
         elif loss_fn == 'nll':
             loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(outputs, targets)
         elif loss_fn == 'soft_jaccard':
@@ -20,32 +21,40 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args, sam=None):
     loss_dict['loss_total'] = total_loss.item()
     return total_loss, loss_dict
 
-class LossMSE:
-    def __init__(self, eps=1e-6):
-        self.eps = eps
+import torch
+import torch.nn as nn
 
-    def __call__(self, outputs, targets, sam=None):
+class LossMSE(nn.Module):
+    def __init__(self, eps=1e-6, channel_weights=(1.0, 1.3)):
+        super().__init__()
+        self.eps = eps
+        self.register_buffer("channel_weights", torch.tensor(channel_weights, dtype=torch.float32))
+
+    def forward(self, outputs, targets, sam_weight=None):
         outputs = outputs.float()
         targets = targets.float()
+        assert outputs.shape == targets.shape
+        B, C, H, W = outputs.shape
 
-        diff = (outputs - targets) ** 2   # (B,C,H,W)
-        '''
-        if sam is not None:
-            # sam: (B,H,W) or (B,1,H,W)
-            if sam.dim() == 3:
-                sam = sam.unsqueeze(1)    # (B,1,H,W)
+        diff = (outputs - targets) ** 2  # (B,C,H,W)
 
-            sam = sam.float()
-
-            # broadcast over channel
-            diff = diff * sam
-
-            loss = diff.sum() / (sam.sum() + self.eps)
+        if sam_weight is None:
+            per_channel = diff.mean(dim=(2, 3))  # (B,C)
         else:
-        '''
-        loss = diff.mean()
+            Wt = sam_weight.float()
+            if Wt.dim() == 5:
+                Wt = Wt.squeeze(1)
+            assert Wt.shape == outputs.shape
 
-        return loss
+            num = (Wt * diff).sum(dim=(2, 3))                 # (B,C)
+            den = Wt.sum(dim=(2, 3)).clamp_min(self.eps)      # (B,C)
+            per_channel = num / den
+
+        cw = self.channel_weights.to(per_channel.device).view(1, C)
+        per_sample = (per_channel * cw).sum(dim=1) / (cw.sum() + 1e-12)
+        # scale-stable weighted average over channels
+        per_sample = (per_channel * cw).sum(dim=1) / (cw.sum() + 1e-12)  # (B,)
+        return per_sample.mean()
 '''
 class LossMSE:
     def __init__(self, beta=1.0, eps=1e-6):

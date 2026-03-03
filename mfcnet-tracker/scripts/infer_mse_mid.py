@@ -1,6 +1,7 @@
 """
 Script for running inference for mse heatmap models 
 written by Chenyan 
+# Use regression to train heatmap for each keypoint type
 """
 
 import os 
@@ -180,9 +181,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
         out_rel = rel.parent / "pred"
 
     if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse" / out_rel
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_v2" / out_rel
     else:
-        out_dir = Path(args.data_dir).parent / "0923_test_multiframe_mse_raw" / out_rel
+        out_dir = Path(args.data_dir).parent / "0923_test_mse_weight_v2" / out_rel
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img_copy = input_rgb.copy()
@@ -280,11 +281,11 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                 rel_img_path = os.path.relpath(img_path, str(args.data_dir))
                 frame_name = img_path.stem   
                 # ===== save heatmaps only =====
-                base_vis_dir = Path(args.data_dir).parent / "testing_multiframe_mse_mid" / "pred_heatmaps"
+                base_vis_dir = Path(args.data_dir).parent / "testing_multiframe_mse_mid_v2" / "pred_heatmaps"
                 case_name = img_path.parents[1].name
                 heatmap_save_dir = (
                     Path(args.data_dir).parent.parent
-                    / "testing_multiframe_mse_mid"
+                    / "testing_multiframe_mse_mid_v2"
                     / "pred_heatmaps"
                     / case_name
                 )
@@ -320,9 +321,9 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         video_rel = rel_path_obj.parent
 
                     if args.dataset == 'ACT':
-                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse"
+                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse_v2"
                     else:
-                        base_pred_root = Path(args.data_dir).parent / "0923_test_multiframe_mse_raw"
+                        base_pred_root = Path(args.data_dir).parent / "0923_test_mse_weight_v2"
                     
                     json_dir = base_pred_root / video_rel
                     json_dir.mkdir(parents=True, exist_ok=True)
@@ -469,7 +470,7 @@ def main_worker(args):
              }
         else:
             CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 5, "max_keep": 2, "threshold": 0.1},
+            0: {"name": "tip", "topk": 10, "max_keep": 2, "threshold": 0.1},
             1: {"name": "anchor", "topk": 5, "max_keep": 1, "threshold":0.1},
             }
     heatmap_parser  = HeatmapParser(CHANNEL_CONFIGS, nms_kernel=3, nms_padding=1)

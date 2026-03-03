@@ -48,7 +48,7 @@ def normalize_case_prefix(case_prefix: str) -> str:
     return case_prefix
 
 
-def generate_multi_class_heatmap(mask, points, types, sigma=10):
+def generate_multi_class_heatmap(mask, points, types, sigma=6):
     if mask.dtype != np.bool_:
         mask = mask.astype(bool)
 
@@ -57,7 +57,7 @@ def generate_multi_class_heatmap(mask, points, types, sigma=10):
     heatmaps = np.zeros((C, H, W), dtype=np.float32)
 
     # ===== Part 1: fixed mask brightness =====
-    mask_value = 0.1
+    mask_value = 0.04
     for c in range(C):
         heatmaps[c][mask] = mask_value
 
@@ -74,95 +74,38 @@ def generate_multi_class_heatmap(mask, points, types, sigma=10):
             gaussian *= mask_float
             heatmaps[c] += gaussian
 
-
     return heatmaps
 
-'''
-def load_images(base_dir):
-    for case_name in os.listdir(base_dir):
-        if case_name.lower() == "test":
-            continue
-        if case_name.lower() == "test_multiframe":
-            continue       
-        case_path = os.path.join(base_dir, case_name)
-        if os.path.isdir(case_path):
-            img_path = os.path.join(case_path, "images")
-            out_path = os.path.join(case_path, "depth_maps")
-            os.makedirs(out_path, exist_ok=True)
 
-            img_list = [f for f in os.listdir(img_path) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
-    return img_list
-'''
+def generate_multi_class_weightmap(mask, points, types, sigma=6, bg_w=0.04, mask_w=0.1, gauss_w = 15.0, out_dtype= np.float16):
+    if mask.dtype != np.bool_:
+        mask = mask.astype(bool)
 
-'''
-            for img_name in tqdm(img_list, desc=f"Processing {case_name}", unit="img"):
-                img = cv2.imread(os.path.join(img_path, img_name))
-                if img is not None:
-                   # depth_map = generate_depth_map(img)
-                    save_path = os.path.join(out_path, img_name)
-                   # cv2.imwrite(save_path, depth_map)
-                else:
-                    print(f"[ERROR] Failed to read image: {img_name}")
-    return None
+    H, W = mask.shape
+    C = len(CLASS_MAP)
+    weightmaps = np.full((C, H, W), fill_value=bg_w, dtype=np.float32)
 
-'''
-'''
-# load json and output as list {'frame_index': int, 'point_coords': [[x, y]], 'point_labels': [1/-1]}
-def load_annotations(json_path, img_dir):
-    with open(json_path, 'r') as f:
-        data = json.load(f)
-    
-    if "imageDimensions" in data:
-        orig_w = float(data["imageDimensions"]["width"])
-        orig_h = float(data["imageDimensions"]["height"])
-    else:
-        orig_w, orig_h = None, None
+    # ===== Part 1: fixed mask brightness =====
+    for c in range(C):
+        weightmaps[c][mask] = mask_w
 
-    img_names = sorted([p for p in os.listdir(img_dir) if p.lower().endswith(('.jpg', '.png', '.jpeg'))])
-    assert len(img_names) > 0, f"No images found in {img_dir}"
-    first_img = cv2.imread(os.path.join(img_dir, img_names[0]))
-    assert first_img is not None, f"Failed to read first image: {img_names[0]}"
-    tgt_h, tgt_w = first_img.shape[:2]
+    if points is not None and len(points) > 0:
+        yy, xx = np.meshgrid(np.arange(H, dtype=np.float32),
+                             np.arange(W, dtype=np.float32),
+                             indexing='ij')
+        mask_float = mask.astype(np.float32)
 
-    if orig_w is None or orig_h is None:
-        orig_w, orig_h = float(tgt_w), float(tgt_h)
+        for (pt,t) in zip(points,types):
+            if t not in CLASS_MAP:
+                continue
+            c = CLASS_MAP[t]
+            x, y = pt
+            gaussian = np.exp(-((xx - x)**2 + (yy - y)**2) / (2 * sigma**2))
+            gaussian *= mask_float
+            weightmaps[c] +=  gaussian * gauss_w
 
-    sx, sy = float(tgt_w) / float(orig_w), float(tgt_h) / float(orig_h)
+    return weightmaps.astype(out_dtype)
 
-    frames = data["frames"]
-    annotations = []
-    obj_key_to_id = {}
-    next_obj_id = 0
-
-
-    for frame_idx in sorted(map(int, frames.keys())):
-        objs = frames[str(frame_idx)]
-        keep = [ann for ann in objs if "contact" not in ann["type"]]
-        for local_idx, ann in enumerate(keep):
-            key = f"{local_idx}"         
-            if key not in obj_key_to_id:
-                obj_key_to_id[key] = next_obj_id
-                next_obj_id += 1
-            obj_id = obj_key_to_id[key]
-            
-            x = float(ann["x"]) * sx
-            y = float(ann["y"]) * sy
-            x = max(0.0, min(tgt_w - 1.0, x))
-            y = max(0.0, min(tgt_h - 1.0, y))
-
-
-            annotations.append({
-                "frame_idx": frame_idx,
-                "obj_id": obj_id,
-                "points": np.array([[x, y]], dtype=np.float32),
-                "labels": np.array([1], dtype=np.int32),
-                "cls": ann["type"],
-            })
-
-    obj_to_class = {ann["obj_id"]: ann["cls"] for ann in annotations}
-    return annotations, obj_to_class
-
-'''
 # ========= load_annotations_from_folder ''KPT'' ===========
 def load_annotations_single_json(json_path, img_dir, start_f=None):
     json_path = Path(json_path)
@@ -180,45 +123,27 @@ def load_annotations_single_json(json_path, img_dir, start_f=None):
     orig_w = data.get("imageDimensions", {}).get("width", tgt_w)
     orig_h = data.get("imageDimensions", {}).get("height", tgt_h)
     sx, sy = float(tgt_w) / float(orig_w), float(tgt_h) / float(orig_h)
+    if start_f is None:
+        raise ValueError(f"[KPT] start_f is None for {json_path}. You must pass entry['start_frame'].")
+    start_f = int(start_f)
 
     # ---------- Step 1: collect all raw frames ----------
-    all_raw_frames = set()
-    for p in data.get("points", []):
-        if not p.get("vis", True):
-            continue
-        if p.get("type", "") == "contact":
-            continue
-        all_raw_frames.add(p["frameIndex"])
-
-    if len(all_raw_frames) == 0:
-        print("[WARN] No valid frames found in annotation.")
-        return [], {}
-
-    sorted_frames = sorted(all_raw_frames)
-
-    # critical: JSON time → clip-local frame
-    raw2local = {raw: i for i, raw in enumerate(sorted_frames)}
-
-    # ---------- Step 2: group points by local frame ----------
     frame_groups = defaultdict(list)
-
     for p in data.get("points", []):
         if not p.get("vis", True):
             continue
         if p.get("type", "") == "contact":
             continue
+        raw_f = int(p["frameIndex"])
+        local_f = raw_f - start_f
 
-        raw_f = p["frameIndex"]
-        if raw_f not in raw2local:
-            continue
-
-        local_f = raw2local[raw_f]
-
-        # safety guard (clip may be shorter)
         if local_f < 0 or local_f >= len(img_names):
             continue
-
         frame_groups[local_f].append(p)
+
+    if len(frame_groups) == 0:
+        print("[WARN] No valid frames found in annotation.")
+        return [], {}
 
     # ---------- Step 3: build annotations ----------
     annotations = []
@@ -242,7 +167,7 @@ def load_annotations_single_json(json_path, img_dir, start_f=None):
             "labels": np.ones(len(pts_xy), dtype=np.int32),
             "cls": "tool"
         })
-
+    annotations.sort(key=lambda a: a["frame_idx"])
     return annotations, obj_to_class
 
 
@@ -331,22 +256,26 @@ def load_annotations_from_folder(folder_path, img_dir):
 
 
 #========= choose_first_frame ===========
-def choose_first_frames(good_frames, annotations, early_window=10, debug_name=None):
+def choose_first_frames(good_frames, annotations, early_window=30, debug_name=None):
+    if len(annotations) == 0:
+        return sorted(set(good_frames))
+
+    min_f = min(ann["frame_idx"] for ann in annotations)
+
     early_counts = defaultdict(int)
     for ann in annotations:
         frame_idx = ann["frame_idx"]
-        if frame_idx < early_window:
+        if frame_idx <= min_f + early_window:  
             early_counts[frame_idx] += len(ann["points"])
-    
+
     if early_counts:
         early_best = max(early_counts.items(), key=lambda x: x[1])[0]
-        if early_best not in good_frames:
-            good_frames.append(early_best)
-    
+        good_frames = list(good_frames) + [early_best]
+
     good_frames = sorted(set(good_frames))
 
     if debug_name is not None:
-        print(f"[DEBUG] {debug_name} - Selected good frames after choosing first frame: {good_frames}")
+        print(f"[DEBUG] {debug_name} - min_f={min_f}, early_window={early_window}, good_frames={good_frames}")
     return good_frames
 
 
@@ -405,6 +334,7 @@ def run_propagation(predictor, inference_state, annotations, selected_frames):
     predictor.reset_state(inference_state)
 
     added = set()
+    added_any = False   
     for frame_idx in sorted(selected_frames):
         frame_anns = [ann for ann in annotations if ann["frame_idx"] == frame_idx]
         print(f"[INFO] Add prompts from frame {frame_idx} with {len(frame_anns)} objs...")
@@ -417,7 +347,10 @@ def run_propagation(predictor, inference_state, annotations, selected_frames):
                 points=ann["points"],
                 labels=ann["labels"]
             )
-
+            added_any = True
+    if not added_any:
+        print("[WARN] No prompts added for propagation. Check your annotations and selected_frames.")
+        return {}
     for out_frame_idx, out_obj_idx, out_mask_logits in predictor.propagate_in_video(inference_state):
         frame_results = []
         for i, obj_id in enumerate(out_obj_idx):
@@ -428,12 +361,21 @@ def run_propagation(predictor, inference_state, annotations, selected_frames):
     return results
 
 
-def save_results(results, save_dir, orig_img_folder=None, annotations=None):
+def save_results(results, save_dir, orig_img_folder=None, annotations=None,
+                 num_frames=None, empty_weight_zero=True):
     os.makedirs(save_dir, exist_ok=True)
     results = dict(results)
-    print(f"[DEBUG] Got {len(results)} frames in results")
 
-    for frame_idx, frame_results in results.items():
+    # 1) sum of all frames
+    if num_frames is None:
+        assert orig_img_folder is not None
+        num_frames = len([f for f in os.listdir(orig_img_folder)
+                          if f.lower().endswith(('.jpg', '.png', '.jpeg'))])
+
+    for frame_idx in range(num_frames):
+        frame_results = results.get(frame_idx, [])   
+
+        # 2) read image
         orig_img = None
         if orig_img_folder is not None:
             img_path = os.path.join(orig_img_folder, f"{frame_idx:06d}.jpg")
@@ -444,91 +386,100 @@ def save_results(results, save_dir, orig_img_folder=None, annotations=None):
         if orig_img is None:
             print(f"[WARN] No image found for frame {frame_idx}, skip.")
             continue
+        H, W = orig_img.shape[:2]
 
-
-        # concatatenate all masks
-        merged_mask = None
-        for obj_id, mask in frame_results:
-            if not isinstance(mask, np.ndarray):
-                continue
-            mask = mask.squeeze()
+        # 3) merge mask
+        if len(frame_results) == 0:
+            merged_mask = np.zeros((H, W), dtype=np.uint8)
+        else:
+            merged_mask = None
+            for obj_id, mask in frame_results:
+                if not isinstance(mask, np.ndarray):
+                    continue
+                mask = mask.squeeze().astype(bool)
+                if merged_mask is None:
+                    merged_mask = mask.copy()
+                else:
+                    merged_mask = np.logical_or(merged_mask, mask)
             if merged_mask is None:
-                merged_mask = mask.copy()
-            else:
-                merged_mask = np.logical_or(merged_mask, mask)
-            merged_mask = merged_mask.astype(np.uint8) 
+                merged_mask = np.zeros((H, W), dtype=bool)
+            merged_mask = merged_mask.astype(np.uint8)
 
-
-        # === keypoints ===
-        ann_points = []
-        ann_types = []
+        # 4) keypoints
+        ann_points, ann_types = [], []
         if annotations is not None:
             for ann in annotations:
                 if ann["frame_idx"] == frame_idx:
                     pts = ann["points"]
-                    ts = ann.get("types", ["tool_tip"] * len(pts))   
+                    ts = ann.get("types", ["tool_tip"] * len(pts))
                     for p, t in zip(pts, ts):
                         ann_points.append(p)
                         ann_types.append(t)
 
-        # === merged mask overlay ===
-        if merged_mask is None:
-            print(f"[WARN] No valid mask for frame {frame_idx}, skip.")
-            continue
-
-        H, W = merged_mask.shape
-        sigma = 10
-        base_name = f"frame{frame_idx+1:04d}_merged"
-
-        # === 1) Generate heatmap save npy ===
+        # 5) heatmap
+        sigma = 6
         heatmap = generate_multi_class_heatmap(
+            mask=merged_mask,
+            points=ann_points,
+            types=ann_types,
+            sigma=sigma
+        )
+        heatmap = heatmap[[CLASS_MAP["tool_tip"], CLASS_MAP["tool_anchor"]]]
+        np.save(os.path.join(save_dir, f"frame_{frame_idx+1:03d}.npy"),
+                heatmap.astype(np.float16))
+
+        # 6) weightmap
+        if empty_weight_zero and (len(ann_points) == 0) and (merged_mask.sum() == 0):
+            weightmap = np.zeros((2, H, W), dtype=np.float16)
+        else:
+            weightmap = generate_multi_class_weightmap(
                 mask=merged_mask,
                 points=ann_points,
                 types=ann_types,
-                sigma=sigma
-                    )
-        # channel 0: tool_tip
-        # channel 1: tool_anchor
-        heatmap = heatmap[
-            [CLASS_MAP["tool_tip"], CLASS_MAP["tool_anchor"]]  
-        ]
-
-        heatmap_npy_path = os.path.join(save_dir, f"frame_{frame_idx+1:03d}.npy")
-        np.save(heatmap_npy_path, heatmap.astype(np.float32))
-
-        # === 2) heatmap visualization per class ===
-        for cname, cidx in  CLASS_MAP.items():
-            class_map = heatmap[cidx]
-
-            # normalize to [0,255]
-            vmin = class_map.min()
-            vmax = class_map.max()
-            class_vis =  (class_map - vmin) / (vmax - vmin +1e-5) * 255.0
-            class_vis = class_vis.astype(np.uint8)
-
-            # apply colormap
-            class_color = cv2.applyColorMap(class_vis, cv2.COLORMAP_VIRIDIS)
-
-            # save pure heatmap
-            heatmap_path = os.path.join(
-                save_dir,
-                f"{base_name}_heatmap_{cname}_sigma{sigma}.png"
+                sigma=sigma,
+                bg_w=0.03,
+                mask_w=0.1,
+                gauss_w=10.0,
+                out_dtype=np.float16
             )
-            cv2.imwrite(heatmap_path, class_color)
+            weightmap = weightmap[[CLASS_MAP["tool_tip"], CLASS_MAP["tool_anchor"]]]
+        np.save(os.path.join(save_dir, f"frame_{frame_idx+1:03d}_weight.npy"),
+                weightmap.astype(np.float16))
 
-              # === 3) per-class overlay on original image ===
-            overlay_heatmap = cv2.addWeighted(orig_img, 0.7, class_color, 0.3, 0)
-            overlay_heatmap_path = os.path.join(
-                save_dir,
-                f"{base_name}_heat_overlay_{cname}_sigma{sigma}.png"
-            )
-            cv2.imwrite(overlay_heatmap_path, overlay_heatmap)
+        # ===== DEBUG: overlay heatmap on the original image for every frame =====
+        tip_map = heatmap[0]   # channel 0: tool_tip
+        anc_map = heatmap[1]   # channel 1: tool_anchor
 
-        print(f"[INFO] Frame {frame_idx} multi-class heatmaps saved.")    
+        # Print quick stats (optional but useful)
+        print(
+            f"[DEBUG][frame {frame_idx}] "
+            f"mask_sum={int(merged_mask.sum())}, num_kpts={len(ann_points)}, "
+            f"tip(min/max)=({tip_map.min():.4f},{tip_map.max():.4f}), "
+            f"anchor(min/max)=({anc_map.min():.4f},{anc_map.max():.4f})"
+        )
 
+        def to_u8(x: np.ndarray) -> np.ndarray:
+            vmin, vmax = float(x.min()), float(x.max())
+            x01 = (x - vmin) / (vmax - vmin + 1e-6)
+            return (x01 * 255.0).astype(np.uint8)
 
+        # Convert heatmaps to uint8 and apply colormap
+        tip_u8 = to_u8(tip_map)
+        anc_u8 = to_u8(anc_map)
 
-def generate_combine_heatmap(mask, keypoints=None, sigma=2):
+        tip_color = cv2.applyColorMap(tip_u8, cv2.COLORMAP_VIRIDIS)
+        anc_color = cv2.applyColorMap(anc_u8, cv2.COLORMAP_VIRIDIS)
+
+        # Overlay on the original image
+        tip_overlay = cv2.addWeighted(orig_img, 0.7, tip_color, 0.3, 0)
+        anc_overlay = cv2.addWeighted(orig_img, 0.7, anc_color, 0.3, 0)
+
+        # Save overlay images
+        cv2.imwrite(os.path.join(save_dir, f"frame_{frame_idx+1:03d}_overlay_tip.png"), tip_overlay)
+        cv2.imwrite(os.path.join(save_dir, f"frame_{frame_idx+1:03d}_overlay_anchor.png"), anc_overlay)
+        # ======= Debug overlay end =======
+
+def generate_combine_heatmap(mask, keypoints=None, sigma=6):
     if mask.dtype != np.bool_:
         mask = mask.astype(bool)
 
@@ -536,7 +487,7 @@ def generate_combine_heatmap(mask, keypoints=None, sigma=2):
     heatmap = np.zeros((H, W), dtype=np.float32)
 
     # ===== Part 1: fixed mask brightness =====
-    mask_value = 0.1
+    mask_value = 0.04
     heatmap[mask] = mask_value
 
     # ===== Part 2: CV Gaussian =====
@@ -582,9 +533,12 @@ def load_kpt_mapping(csv_path):
             action     = row[2]
             start_f    = int(row[3])
             end_f      = int(row[4])
-            video_path = row[6]
+            video_path = row[6].strip()
 
-            video_path = video_path.replace("training_data", "0923_training_data")
+            video_path = video_path.replace(
+    "/data/home/hao/chenyan/data/training_data/",
+    "/home/chenyan/fallout_data/data/0923_by_action_2/clip/"
+)
 
             entries.append({
                 "json_file": json_name,
@@ -746,9 +700,9 @@ if __name__ == "__main__":
 
     elif args.dataset == "kpt":
         # Step 1: Load annotations
-        base_train = '/data/home/hao/chenyan/data/0923_by_action'
-        base_json  = '/data/home/hao/chenyan/ori_data/surg_act_09232025'
-        csv_root =  "/data/home/hao/chenyan/data/0923_training_data" 
+        base_train = '/home/chenyan/fallout_data/data/0923_by_action_2'
+        base_json  = '/home/chenyan/fallout_data/ori_data/surg_act_09232025'
+        csv_root =  "/home/chenyan/fallout_data/data/0923_training_data" 
         actions = [args.action]
         for action in actions:
             action_dir = os.path.join(base_train, action)
@@ -801,7 +755,7 @@ if __name__ == "__main__":
                     if save_dir.exists():
                         npy_files = sorted([f for f in os.listdir(save_dir) if f.endswith(".npy")])
 
-                        if len(npy_files) != len(image_files):
+                        if len(npy_files) != 3 *len(image_files):
                             print(
                                 f"[REGEN] {case_name}/{video_name}: "
                                 f"npy={len(npy_files)} != images={len(image_files)}, regenerating."
@@ -833,15 +787,16 @@ if __name__ == "__main__":
                     for tool_id, tool_name in obj_to_class.items():
 
                         tool_annotations = [ann for ann in annotations if ann["obj_id"] == tool_id]
-                        good_frames = choose_good_frames(tool_annotations, {tool_id: tool_name}, 5)
-                        good_frames = choose_first_frames(good_frames, tool_annotations, 10)
-                        if 0 not in good_frames:
-                            good_frames = [0] + good_frames
-
-                        good_frames = sorted(set(good_frames))
-                        if len(annotations) == 0:
+                        if len(tool_annotations) == 0:
                             print(f"[WARN] No annotations for tool_id {tool_id} in {json_path}, skipping.")
                             continue
+                        good_frames = choose_good_frames(tool_annotations, {tool_id: tool_name}, 5)
+                        good_frames = choose_first_frames(good_frames, tool_annotations, early_window=30)
+
+                
+                        annotated_frames = sorted({ann["frame_idx"] for ann in tool_annotations})
+                        anchor = annotated_frames[0]
+                        good_frames = sorted(set([anchor] + good_frames))
 
                         results = run_propagation(
                             predictor, inference_state, tool_annotations, good_frames
@@ -858,6 +813,9 @@ if __name__ == "__main__":
                         print(f"[INFO] Found existing {save_dir}, removing old results...")
                         shutil.rmtree(save_dir)
 
+                    if not results:
+                        print(f"[WARN] Empty results for {case_name}/{video_name}, skip saving.")
+                        continue
                     save_results(
                         results,
                         str(save_dir),

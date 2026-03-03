@@ -6,6 +6,26 @@ import re
 
 from scipy.optimize import linear_sum_assignment
 
+
+def fix_out_dir(out_dir_old: str, action: str) -> str:
+    """
+    CSV out_dir is old path like:
+      /data/home/hao/chenyan/data/training_data/<case...>/video_001
+    New real path should be:
+      /home/chenyan/fallout_data/data/0923_by_action/<action>/<case...>/video_001
+    """
+    out_dir_new = out_dir_old.replace(
+        "/data/home/hao/chenyan/data/training_data/",
+        "/home/chenyan/fallout_data/data/0923_by_action/"
+    )
+    if f"/{action}/" not in out_dir_new:
+        prefix = "/home/chenyan/fallout_data/data/0923_by_action/"
+        assert out_dir_new.startswith(prefix), out_dir_new
+        rest = out_dir_new[len(prefix):].lstrip("/")
+        out_dir_new = prefix + action + "/" + rest
+
+    return out_dir_new
+
 # =========================
 # Canonical evaluation size
 # =========================
@@ -107,6 +127,7 @@ def build_kpt_gt(case_name, training_data_root, ori_data_root):
         for row in reader:
             json_file = row["json_file"]
             out_dir_old = row["out_dir"]
+            action  = row["action"]
 
             case_name_norm = normalize_name(case_name)
             video_dir = os.path.basename(out_dir_old)
@@ -121,6 +142,11 @@ def build_kpt_gt(case_name, training_data_root, ori_data_root):
 
             W_orig = int(round(data["imageDimensions"]["width"]))
             H_orig = int(round(data["imageDimensions"]["height"]))
+
+            out_dir_real = fix_out_dir(out_dir_old, action)   
+            video_dir = os.path.basename(out_dir_real)        
+
+            key_prefix = os.path.join(case_name_norm, video_dir, "images")
 
             frames = joint_points_per_frame(data["points"])
             frames_seq = sorted(frames.keys())
@@ -152,8 +178,8 @@ def build_kpt_gt(case_name, training_data_root, ori_data_root):
                 tip_arr = np.array(tip_pts, dtype=np.float32) if tip_pts else np.zeros((0, 2), dtype=np.float32)
                 anchor_arr = np.array(anchor_pts, dtype=np.float32) if anchor_pts else np.zeros((0, 2), dtype=np.float32)
 
-                img_path_abs = os.path.join(out_dir_new, "images", f"frame_{local_idx:03d}.png")
-                rel_img_path = os.path.relpath(img_path_abs, training_data_root)
+                rel_img_path = os.path.join(key_prefix, f"frame_{local_idx:03d}.png")
+
 
                 gt[rel_img_path] = {
                     "W_orig": W_orig,
@@ -423,10 +449,10 @@ def test_single_case(
         precision = TP / (TP + FP + 1e-8)
         recall = TP / (TP + FN + 1e-8)
 
-        print(f"[{key.upper()}] Avg L2 error (640×480 px): {avg_l2:.4f}, Avg L1 error: {avg_l1:.4f}")
+        print(f"[{key.upper()}] Avg L2 error (640*480 px): {avg_l2:.4f}, Avg L1 error: {avg_l1:.4f}")
         print(f"[{key.upper()}] TP={TP}, FP={FP}, FN={FN}, precision={precision:.4f}, recall={recall:.4f}")
 
-    print(f"\n=== Single-case evaluation (CANON {CANON_W}×{CANON_H}): {case_name} ===")
+    print(f"\n=== Single-case evaluation (CANON {CANON_W}*{CANON_H}): {case_name} ===")
     _print_stats("tip")
     _print_stats("anchor")
 
@@ -437,9 +463,9 @@ def test_single_case(
 # Main
 # =========================
 if __name__ == "__main__":
-    training_data_root = "/data/home/hao/chenyan/data/0923_training_data"
-    ori_data_root = "/data/home/hao/chenyan/ori_data/surg_act_09232025"
-    pred_root_dir = "/data/home/hao/chenyan/data/0923_test_multiframe_mse_raw/clip"
+    training_data_root = "/home/chenyan/fallout_data/data/0923_training_data"
+    ori_data_root = "/home/chenyan/fallout_data/ori_data/surg_act_09232025"
+    pred_root_dir = "/home/chenyan/fallout_data/data/0923_test_mse_weight_v3/clip"
 
     case_list = [case for case in sorted(os.listdir(pred_root_dir))]
 
@@ -464,7 +490,7 @@ if __name__ == "__main__":
     print("\n=== GLOBAL summary (CANON ) ===")
     print(json.dumps(global_summary, indent=2))
 
-    save_json_path = "/data/home/hao/chenyan/data/match_vis_mse_raw/eval_results_clip.json"
+    save_json_path = "/home/chenyan/fallout_data/eval/eval_results_clip_v3.json"
     os.makedirs(os.path.dirname(save_json_path), exist_ok=True)
     with open(save_json_path, "w", encoding="utf-8") as f:
         json.dump(per_case_summaries, f, indent=2)

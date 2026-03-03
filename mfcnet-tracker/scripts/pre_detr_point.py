@@ -1,6 +1,7 @@
 import os, re, csv, math, json
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from collections import defaultdict
 import numpy as np
 import cv2
 import argparse
@@ -36,24 +37,94 @@ def rescale_points(x, y, W_ori, H_ori, W_tar=W_tar, H_tar=H_tar):
     y_new = y * H_tar / H_ori
     return x_new, y_new
 
+
 def dump_json(out_dir, W_ori, H_ori, frames, W_tar=W_tar, H_tar=H_tar):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
     frame_ids = sorted(frames.keys(), key=lambda k: int(k))
     pad = max(3, len(str(len(frame_ids))))
 
-    for seq_id, points in enumerate(frame_ids, start=1):
-         items = []
-         for point in frames[points]:
-             x_rescaled, y_rescaled = rescale_points(point["x"], point["y"], W_ori, H_ori, W_tar, H_tar)
-             items.append({
-             "x": x_rescaled,
-             "y": y_rescaled,
-             "label": point["type"],
-             "visibility": point["vis"],
-             })
+    for seq_id, frame_key in enumerate(frame_ids, start=1):
+        pts = frames[frame_key]
 
-         with open(out_dir / f"frame_{seq_id:0{pad}d}.json", "w") as f:
+        # First rescale all points
+        tmp = []
+        for p in pts:
+            x_rescaled, y_rescaled = rescale_points(
+                p["x"], p["y"], W_ori, H_ori, W_tar, H_tar
+            )
+            tmp.append({
+                "x": x_rescaled,
+                "y": y_rescaled,
+                "label": p["type"],
+                "visibility": p["vis"],
+            })
+
+        items = []
+
+        # Assign idx=3 for contact points
+        for t in tmp:
+            if t["label"] == "contact":
+                items.append({
+                    "x": t["x"],
+                    "y": t["y"],
+                    "label": t["label"],
+                    "visibility": t["visibility"],
+                    "idx": 3,
+                })
+
+        # Group non-contact points by label
+        by_label = defaultdict(list)
+        for t in tmp:
+            if t["label"] != "contact":
+                by_label[t["label"]].append(t)
+
+        for label, group in by_label.items():
+            # Sort by x coordinate to determine left and right
+            group_sorted = sorted(group, key=lambda d: d["x"])
+
+            if len(group_sorted) >= 2:
+                # Left point -> idx=0
+                left = group_sorted[0]
+                items.append({
+                    "x": left["x"],
+                    "y": left["y"],
+                    "label": label,
+                    "visibility": left["visibility"],
+                    "idx": 0,
+                })
+
+                # Right point -> idx=1
+                right = group_sorted[1]
+                items.append({
+                    "x": right["x"],
+                    "y": right["y"],
+                    "label": label,
+                    "visibility": right["visibility"],
+                    "idx": 1,
+                })
+
+                # Any additional points -> idx=2
+                for extra in group_sorted[2:]:
+                    items.append({
+                        "x": extra["x"],
+                        "y": extra["y"],
+                        "label": label,
+                        "visibility": extra["visibility"],
+                        "idx": 2,
+                    })
+            else:
+                # Single point -> idx=2
+                only = group_sorted[0]
+                items.append({
+                    "x": only["x"],
+                    "y": only["y"],
+                    "label": label,
+                    "visibility": only["visibility"],
+                    "idx": 2,
+                })
+        with open(out_dir / f"frame_{seq_id:0{pad}d}.json", "w") as f:
             json.dump(items, f, indent=4)
 
 def load_mapping_rows(mapping_csv_path):
@@ -76,9 +147,9 @@ def normalize_case_name(name: str) -> str:
     return name
 
 if __name__ == "__main__":
-    SRC_ROOT = "/data/home/hao/chenyan/ori_data/surg_act_09232025"
-    DST_ROOT = "/data/home/hao/chenyan/data/0923_training_data"
-    OUT_ROOT  = "/data/home/hao/chenyan/data/0923_by_action" 
+    SRC_ROOT = "/home/chenyan/fallout_data/ori_data/surg_act_09232025"
+    DST_ROOT = "/home/chenyan/fallout_data/data/0923_training_data"
+    OUT_ROOT  = "/home/chenyan/fallout_data/data/0923_by_action" 
  
     for case_name in os.listdir(SRC_ROOT):
         case_path = os.path.join(SRC_ROOT, case_name)
@@ -94,6 +165,10 @@ if __name__ == "__main__":
             json_file = row["json_file"]
             video_idx = row["video_idx"]
             action = row["action"]
+
+            if action not in ["grasp", "clip"]:
+                print(f"[skip] {action} not in target actions")
+                continue
 
             json_path = os.path.join(ann_dir, json_file)
             if not os.path.isfile(json_path):

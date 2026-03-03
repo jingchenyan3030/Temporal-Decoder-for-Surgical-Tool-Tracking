@@ -147,13 +147,13 @@ class KPT_test_mid(Dataset):
         sam = None
         # === task specific loading (ACT-style, clean) ===
         if self.prediction_task == 'keypoint_heatmap':
+            # 1. heatmap(gt)
             sam_dir = tgt_root / 'sam_results'
             heatmap_path = sam_dir / (img_t.stem + ".npy")
-
             if not heatmap_path.exists():
                 raise FileNotFoundError(f"Missing heatmap: {heatmap_path}")
-
             mask = np.load(str(heatmap_path)).astype(np.float32)
+            # 2. sam_mask (spatial prior) neglect for now, can be added back if needed
             '''
             sam_path = sam_dir / (img_t.stem + "_mask.npy")
             if not sam_path.exists():
@@ -161,6 +161,13 @@ class KPT_test_mid(Dataset):
             sam = np.load(str(sam_path)).astype(np.float32)
             sam = (sam > 0).astype(np.float32)
             '''
+            # 3. weight map for sam_mask
+            sam_weight = None
+            sam_weight_path = sam_dir / (img_t.stem + "_weight.npy")
+            if sam_weight_path.exists():
+                sam_weight = np.load(str(sam_weight_path)).astype(np.float32)
+            else:
+                sam_weight = np.ones(mask.shape, dtype=np.float32)
         elif self.prediction_task == 'detr_keypoint':
             TIP_LABEL =  "tool_tip"
             ANCHOR_LABEL = "tool_anchor"
@@ -250,6 +257,8 @@ class KPT_test_mid(Dataset):
             'input': input_imgs,
             'mask': mask,
         }
+        if self.prediction_task == 'keypoint_heatmap':
+            sample['sam_weight'] = sam_weight
         if self.prediction_task == 'detr_keypoint':
             sample['points'] = points
             sample['labels'] = labels
@@ -260,4 +269,6 @@ class KPT_test_mid(Dataset):
 
         sample = self.transform(sample)
         sample['center_path'] = str(self.all_frames[center])
+        sample['video_id'] = str(tgt_root)  
+        sample['frame_id'] = int(local_j)  
         return sample

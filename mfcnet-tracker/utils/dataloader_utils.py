@@ -282,13 +282,15 @@ def get_KPT_dataset_filenames(args):
                         key=str
                     )
                     poses = natsorted(list(pose_dir.glob("*.png")), key=str)
-                    sam_masks = natsorted(list(sam_dir.glob("frame_*.npy")), key=str)
+                    # sam_masks = natsorted(list(sam_dir.glob("frame_*.npy")), key=str)
+                    sam_masks = natsorted([p for p in sam_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")], key=str)
+                    sam_weights = natsorted(list(sam_dir.glob("frame_*_weight.npy")),key=str)
                     detr_points = natsorted(list(detr_dir.glob("frame_*.json")), key=str)
 
-                    if not (len(images) == len(poses) == len(sam_masks) == len(detr_points)):
+                    if not (len(images) == len(poses) == len(sam_masks) == len(detr_points) == len(sam_weights)):
                         print(
                             f"[DROP VIDEO] {video_dir} "
-                            f"images={len(images)} poses={len(poses)} npy={len(sam_masks)} detr={len(detr_points)}"
+                            f"images={len(images)} poses={len(poses)} npy={len(sam_masks)} detr={len(detr_points)} weight={len(sam_weights)}"
                         )
                         continue
                     '''
