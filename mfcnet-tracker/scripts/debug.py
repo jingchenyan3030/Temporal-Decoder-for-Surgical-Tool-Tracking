@@ -1,70 +1,145 @@
-import argparse
-import shutil
+import json
 from pathlib import Path
+import cv2
+import os
 
-ROOT = Path("/data/home/hao/chenyan/data/0923_by_action")
+# =========================
+# Paths
+# =========================
+img_path = Path(
+    "/home/chenyan/fallout_data/data/0923_by_action/clip/"
+    "case_059_video_part_001_segment_6/video_001/images/frame_001.png"
+)
 
-def has_nonempty_images(video_dir: Path) -> bool:
-    img_dir = video_dir / "images"
-    if not img_dir.is_dir():
-        return False
+gt_json_path = Path(
+    "/home/chenyan/fallout_data/data/0923_by_action/clip/"
+    "case_059_video_part_001_segment_6/video_001/points_detr/frame_001.json"
+)
 
-    exts = (".png", ".jpg", ".jpeg")
-    for p in img_dir.iterdir():
-        if p.is_file() and p.suffix.lower() in exts:
-            return True
-    return False
+# inference output json (one per video)
+pred_json_path = Path(
+    "/home/chenyan/fallout_data/data/kpt_test_multiframe_detr_raw/clip/"
+    "case_059_video_part_001_segment_6/video_001/pred_points.json"
+)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--action", type=str, default=None,
-                    help="Only process one action (e.g., grasp/clip/cut/dissect). If omitted, process all.")
-    ap.add_argument("--dry_run", action="store_true",
-                    help="Print what would be deleted without deleting.")
-    args = ap.parse_args()
+# this must match the key stored in pred_points.json
+pred_frame_key = "clip/case_059_video_part_001_segment_6/video_001/images/frame_001.png"
 
-    if not ROOT.is_dir():
-        raise RuntimeError(f"Root not found: {ROOT}")
+# target size (same as model input / json coordinate space)
+H_new, W_new = 256, 320
 
-    print(f"[INFO] Scanning root: {ROOT}")
-    if args.action:
-        print(f"[INFO] Target action: {args.action}")
-    if args.dry_run:
-        print("[INFO] DRY RUN (no deletion)")
+# save dir
+out_dir = Path("~/surg_act_keypoint/mfcnet-tracker/debug_gt_check").expanduser()
+out_dir.mkdir(parents=True, exist_ok=True)
 
-    deleted = 0
-    kept = 0
+# =========================
+# Load image
+# =========================
+img_bgr = cv2.imread(str(img_path))
+if img_bgr is None:
+    raise FileNotFoundError(f"Cannot read image: {img_path}")
 
-    for action_dir in sorted(ROOT.iterdir()):
-        if not action_dir.is_dir():
-            continue
-        if args.action and action_dir.name != args.action:
-            continue
+H_old, W_old = img_bgr.shape[:2]
+print(f"Original image size: H={H_old}, W={W_old}")
+print(f"Target image size  : H={H_new}, W={W_new}")
 
-        for case_dir in sorted(action_dir.iterdir()):
-            if not case_dir.is_dir():
-                continue
+# resize original image to 320x256
+img_resized = cv2.resize(img_bgr, (W_new, H_new), interpolation=cv2.INTER_LINEAR)
+vis_resized = img_resized.copy()
 
-            for video_dir in sorted(case_dir.iterdir()):
-                if not video_dir.is_dir():
-                    continue
-                if not video_dir.name.startswith("video_"):
-                    continue
+# =========================
+# Load GT
+# =========================
+with open(gt_json_path, "r") as f:
+    gt = json.load(f)
 
-                if has_nonempty_images(video_dir):
-                    kept += 1
-                    continue
+# =========================
+# Load Prediction
+# =========================
+with open(pred_json_path, "r") as f:
+    pred_all = json.load(f)
 
-    
-                rel = video_dir.relative_to(ROOT)
-                if args.dry_run:
-                    print(f"[DEL] (dry) {rel}")
-                else:
-                    print(f"[DEL] {rel}")
-                    shutil.rmtree(video_dir)
-                deleted += 1
+if pred_frame_key not in pred_all:
+    raise KeyError(f"{pred_frame_key} not found in {pred_json_path}")
 
-    print(f"\n[SUMMARY] kept={kept}, deleted={deleted}")
+pred_frame = pred_all[pred_frame_key]
 
-if __name__ == "__main__":
-    main()
+pred_tip = pred_frame.get("tip", [])
+pred_anchor = pred_frame.get("anchor", [])
+
+print("Prediction loaded:")
+print("tip   =", pred_tip)
+print("anchor=", pred_anchor)
+
+# =========================
+# Drawing helper
+# =========================
+def draw_point(img, x, y, color, text=None, radius=4):
+    x_i, y_i = int(round(x)), int(round(y))
+    cv2.circle(img, (x_i, y_i), radius, color, -1)
+    if text is not None:
+        cv2.putText(
+            img,
+            text,
+            (x_i + 5, y_i - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+# =========================
+# Overlay GT points
+# json GT points are already in 320x256 space
+# =========================
+for i, p in enumerate(gt):
+    label = p["label"]
+    vis = bool(p.get("visibility", True))
+    x = float(p["x"])
+    y = float(p["y"])
+
+    tag = f"GT_{label}_{i}_{'V' if vis else 'X'}"
+
+    # GT color
+    if label == "tool_tip":
+        color = (0, 255, 255)   # yellow
+    elif label == "tool_anchor":
+        color = (0, 0, 255)     # red
+    elif label == "contact":
+        color = (0, 255, 0)     # green
+    else:
+        color = (255, 255, 255) # white
+
+    draw_point(vis_resized, x, y, color, tag, radius=5)
+
+# =========================
+# Overlay prediction points
+# pred json is also in 320x256 space
+# =========================
+# predicted tip -> cyan
+for i, pt in enumerate(pred_tip):
+    if len(pt) < 2:
+        continue
+    x = float(pt[0])
+    y = float(pt[1])
+    score = float(pt[2]) if len(pt) > 2 else 1.0
+    draw_point(vis_resized, x, y, (255, 255, 0), f"P_tip_{i}_{score:.2f}", radius=6)
+
+# predicted anchor -> magenta
+for i, pt in enumerate(pred_anchor):
+    if len(pt) < 2:
+        continue
+    x = float(pt[0])
+    y = float(pt[1])
+    score = float(pt[2]) if len(pt) > 2 else 1.0
+    draw_point(vis_resized, x, y, (255, 0, 255), f"P_anchor_{i}_{score:.2f}", radius=6)
+
+# =========================
+# Save
+# =========================
+out_file = out_dir / f"{img_path.stem}_gt_and_pred_overlay_on_resized_320x256.png"
+cv2.imwrite(str(out_file), vis_resized)
+
+print("Saved file:")
+print(out_file)

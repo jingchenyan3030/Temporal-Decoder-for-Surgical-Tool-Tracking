@@ -7,6 +7,7 @@ from src.dataset_KPT import KPT
 from src.dataset_KPT_copy import KPT_test
 from src.dataset_KPT_mid import KPT_test_mid
 from src.dataset_KPT_track import KPT_track_mid
+from src.dataset_KPT_a_test import KPT_test_a
 from torch.utils.data import DataLoader 
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
@@ -79,7 +80,8 @@ class customResize(object):
             resized_dict['points'] = pts
             resized_dict['labels'] = sample['labels']
             resized_dict['visibility'] = sample['visibility']
-            resized_dict['valid'] = sample['valid']
+            if 'valid' in sample:
+                resized_dict['valid'] = sample['valid']
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             resized_dict['sam_weight'] = transforms.Resize(
                 self.img_size, interpolation=tF.InterpolationMode.NEAREST
@@ -371,16 +373,12 @@ def get_data_loader(args):
                         train_dataset,
                         num_replicas=world_size,
                         rank=global_rank,
-                        shuffle=True
+                        shuffle=True,
+                        drop_last = True,
                     )
                     shuffle_train = False
 
-                    val_sampler = DistributedSampler(
-                        val_dataset,
-                        num_replicas=world_size,
-                        rank=global_rank,
-                        shuffle=False
-                    )
+                    val_sampler = None
 
                 else:
                     train_sampler = None
@@ -388,7 +386,7 @@ def get_data_loader(args):
                     shuffle_train = True
 
                 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
-                        sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
+                        sampler=train_sampler, num_workers=args.num_workers, pin_memory=True, drop_last = True, persistent_workers=(args.num_workers > 0),)
 
                 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
                         sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
@@ -411,8 +409,12 @@ def get_data_loader(args):
         else:
             if args.mode == 'training': 
                 train_file_names, val_file_names = get_KPT_dataset_filenames(args)
-                train_transform = get_act_transform('train', args)
-                val_transform = get_act_transform('val', args)
+                if args.prediction_task == 'detr_keypoint':
+                    train_transform = get_kpt_detr_transform('train', args)
+                    val_transform = get_kpt_detr_transform('val', args)
+                else:
+                    train_transform = get_act_transform('train', args)
+                    val_transform = get_act_transform('val', args)
                 train_dataset = KPT_track_mid(train_file_names, train_transform,
                                         mode=args.mode, prediction_task=args.prediction_task,
                                         num_input_frames=args.num_input_frames,

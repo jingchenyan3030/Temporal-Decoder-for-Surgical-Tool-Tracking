@@ -9,7 +9,7 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args, sam_weight=None):
     for loss_fn, loss_wt in zip(loss_fns, loss_wts):
         if loss_fn == 'mse':
             mse_loss = LossMSE()
-            loss = mse_loss(outputs, targets, sam_weight=sam_weight)
+            loss = mse_loss(outputs, targets, sam=sam_weight)
         elif loss_fn == 'nll':
             loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(outputs, targets)
         elif loss_fn == 'soft_jaccard':
@@ -23,7 +23,7 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args, sam_weight=None):
 
 import torch
 import torch.nn as nn
-
+'''
 class LossMSE(nn.Module):
     def __init__(self, eps=1e-6, channel_weights=(1.0, 1.3)):
         super().__init__()
@@ -78,7 +78,7 @@ class LossMSE:
         loss = (diff * weight).mean()
 
         return loss
-'''
+
 class LossNLL: 
     def __init__(self, class_weights=None, num_classes=1):
         if class_weights is not None:

@@ -131,46 +131,15 @@ import torch.nn.functional as F
 def compute_tracking_loss(
     pred_points_t, gt_points_t, vis_t,
     prev_pred_points=None, prev_vis=None,
-    prev_gt_points=None,              # optional, only for match_gt_vel
+    prev_gt_points=None,
     alpha=0.01, eps=1e-6,
-    vel_mode="pred_smooth"            # "pred_smooth" or "match_gt_vel"
+    vel_mode="pred_smooth",
 ):
-    """
-    pred_points_t: (B,Q,2)
-    gt_points_t:   (B,Q,2)
-    vis_t:         (B,Q) {0,1} or bool
-    prev_pred_points: (B,Q,2) from t-1 (recommend detach before passing)
-    prev_vis:         (B,Q)
-    prev_gt_points:   (B,Q,2) from t-1 (needed only if vel_mode=="match_gt_vel")
-    """
+    m = (vis_t > 0.5).float()
+    per_q = F.l1_loss(pred_points_t, gt_points_t, reduction="none").sum(dim=-1)
+    L_vis_t = (per_q * m).sum() / (m.sum() + eps)
 
-    # --- L_vis (single-frame) ---
-    m = (vis_t > 0.5).float()  # (B,Q)
-    per_q = F.smooth_l1_loss(pred_points_t, gt_points_t, reduction="none").sum(dim=-1)  # (B,Q)
-    denom = m.sum()
-    L_vis_t = (per_q * m).sum() / (denom + eps)
+    L_vel_t = pred_points_t.new_zeros(())
+    L_t = L_vis_t
 
-    # --- L_vel (pair-masked) ---
-    L_vel_t = pred_points_t.sum() * 0.0
-    if prev_pred_points is not None and prev_vis is not None:
-        mp = ((vis_t > 0.5) & (prev_vis > 0.5)).float()  # (B,Q)
-        denom_p = mp.sum()
-
-        if denom_p.item() > 0:
-            if vel_mode == "pred_smooth":
-                dp = pred_points_t - prev_pred_points  # (B,Q,2)
-                vel = torch.abs(dp).sum(dim=-1)        # (B,Q)
-
-            elif vel_mode == "match_gt_vel":
-                assert prev_gt_points is not None, "prev_gt_points required for match_gt_vel"
-                pred_vel = pred_points_t - prev_pred_points
-                gt_vel   = gt_points_t - prev_gt_points
-                vel = torch.abs(pred_vel - gt_vel).sum(dim=-1)
-
-            else:
-                raise ValueError(f"Unknown vel_mode: {vel_mode}")
-
-            L_vel_t = (vel * mp).sum() / (denom_p + eps)
-
-    L_t = L_vis_t + alpha * L_vel_t
     return L_t, L_vis_t, L_vel_t

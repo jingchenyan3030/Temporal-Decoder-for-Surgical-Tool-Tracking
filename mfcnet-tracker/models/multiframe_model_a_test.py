@@ -34,6 +34,19 @@ class MultiFrameNetBase(nn.Module):
     def forward(self, x):
         raise NotImplementedError("This is a base class. Use MultiFrameNetBasic or MultiFrameNetLarge.")
 
+# class MultiFrameNetBasic(MultiFrameNetBase):
+#     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
+#         super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
+
+#         self.multiframe_net = nn.Sequential(
+#             nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
+#             nn.BatchNorm2d(self.num_frames * self.num_classes), 
+#             nn.ReLU(),
+#             nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
+#         )
+
+#     def forward(self, x):
+#         return self.multiframe_net(x)
 
 class MultiFrameNetBasic(MultiFrameNetBase):
     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
@@ -41,6 +54,7 @@ class MultiFrameNetBasic(MultiFrameNetBase):
         self.in_channels = num_classes * num_frames
         if with_depth:
             self.in_channels += num_frames
+        self.in_channels += 1
         self.num_classes = num_classes
         self.num_frames = num_frames
         self.with_optflow = with_optflow
@@ -58,18 +72,17 @@ class MultiFrameNetBasic(MultiFrameNetBase):
             nn.ReLU(),
             nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
         )
+        # self.multiframe_net = nn.Sequential(
+        #     nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
+        #     nn.BatchNorm2d(self.num_frames * self.num_classes), 
+        #     nn.ReLU(),
+        #     nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
+        # )
 
         # Register the mesh grid as a buffer
         self.register_buffer('grid', self._create_mesh_grid())
 
-    def forward(self, x, sam =None, alpha=0.2):
-        if sam is not None:
-            sam = sam.float() # B,1,H,W
-            w = alpha + (1-alpha) * sam
-            x_sequence = x[:, :self.num_frames * self.num_classes, :, :] * w
-            x_rest = x[:, self.num_frames * self.num_classes:, :, :] 
-            x = torch.cat((x_sequence, x_rest), dim=1) if x_rest.numel() > 0 else x_sequence     
-        
+    def forward(self, x):
         if self.with_optflow:
             x = self.warp_segmentation_and_depth(x)
         return self.multiframe_net(x)
@@ -209,7 +222,7 @@ class TernausNetMultiBasic(nn.Module):
         self.multiframe_net = MultiFrameNetBasic(self.num_classes, self.num_frames, has_base_preframe_model_trained,
                                             with_optflow=self.optflow_inputs, with_depth=self.depth_inputs)
     
-    def forward(self, x, optflow=None, depth=None, sam=None, alpha=0.2):
+    def forward(self, x, anchor_map,optflow=None, depth=None):
         y_output = []
         for x_img in x: 
             y_img = self.base_model(x_img)
@@ -222,7 +235,17 @@ class TernausNetMultiBasic(nn.Module):
                 y_output.append(depth_img)          # Add N_f depth images
         
         y_output = torch.cat(y_output, dim=1)       # B x H x W
-        y_output = self.multiframe_net(y_output, sam =sam, alpha=alpha)    # B x N_c x H x W
+        if anchor_map.shape[-2:] != y_output.shape[-2:]:
+            anchor_map = F.interpolate(
+                anchor_map,
+                size=y_output.shape[-2:],
+                mode='bilinear',
+                align_corners=False
+            )
+        if anchor_map.dim() == 3:
+                anchor_map = anchor_map.unsqueeze(1)
+        y_output = torch.cat([y_output, anchor_map], dim=1)
+        y_output = self.multiframe_net(y_output)    # B x N_c x H x W
         y_output = torch.sigmoid(y_output)
         return y_output
 
@@ -256,7 +279,7 @@ class TernausNetMultiLarge(nn.Module):
                 y_output.append(depth_img)          # Add N_f depth images
         
         y_output = torch.cat(y_output, dim=1)       # B x H x W
-        y_output = self.multiframe_net(y_output, sam=None, alpha=0.2)    # B x N_c x H x W
+        y_output = self.multiframe_net(y_output)    # B x N_c x H x W
         return y_output
 
 class DeepLabMultiBasic(nn.Module):

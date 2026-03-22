@@ -4,8 +4,8 @@ Configuration file stating all the args for multi-frame segmentation task
 
 def train_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
-                        help='Path to data directory. Default:/home/chenyan/fallout_data/data/0923_by_action')
+    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action_2', 
+                        help='Path to data directory. Default:/home/chenyan/fallout_data/data/0923_by_action_2')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT','ACT'],
                         help='Dataset name. Default: KPT')
     parser.add_argument('--fold_index', type=int, default=-1, choices=[-1,0,1,2,3], 
@@ -97,8 +97,8 @@ def train_config_parser(parser):
 
 def test_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--action', type=str, default='grasp', choices=['grasp', 'clip','dissect', 'cut'], 
-                        help='Mode of operation. Default: grasp')
+    parser.add_argument('--action', type=str, default='clip', choices=['grasp', 'clip','dissect', 'cut'], 
+                        help='Mode of operation. Default: clip')
     parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
                         help='Path to data directory. Default: /home/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT', 'ACT'], # should change but not change
@@ -113,7 +113,7 @@ def test_config_parser(parser):
     parser.add_argument('--track', type = int, default=0,choices=[0,1])
     
     # I/O related arguments
-    parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint/checkpoint/testing_multiframe_kpt_mse_nosoftmax', 
+    parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint/testing_multiframe_kpt_mse_nosoftmax', 
                         help='Path to save experiment results. Default: /data/home/hao/chenyan/checkpoint/testing_multiframe_kpt_mse_nosoftmax')
     parser.add_argument('--expt_name', type=str, default='multiframe_expt',
                         help='Experiment name. Default: multiframe_expt')
@@ -138,7 +138,7 @@ def test_config_parser(parser):
                         help='Use pre-trained weights. Default: False')
     parser.add_argument('--load_wts_base_model', type=str, default= None, 
                         help='Path to base model weights from a pretrained per-frame model. Default: None')
-    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_grasp_mse_sam_v2_full/ckpts/model_007.pth', 
+    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_mse_sam_v2_full/ckpts/model_010.pth', 
                         help='Path to model weights. Default: None')
     parser.add_argument('--input_height', type=int, default=256, help='NN input image height')
     parser.add_argument('--input_width', type=int, default=320, help='NN input image width')

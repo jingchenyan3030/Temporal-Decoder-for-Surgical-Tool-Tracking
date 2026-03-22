@@ -362,6 +362,7 @@ def summarize_stats(stats):
         avg_l1 = float(sum_l1 / num_match) if num_match > 0 else 0.0
         precision = TP / (TP + FP + 1e-8)
         recall = TP / (TP + FN + 1e-8)
+        f1 = (2 * TP) / (2 * TP + FP + FN + 1e-8)
 
         summary[key] = {
             "TP": TP,
@@ -372,6 +373,7 @@ def summarize_stats(stats):
             "avg_l2": avg_l2,
             "precision": float(precision),
             "recall": float(recall),
+            "f1":float(f1)
         }
     return summary
 
@@ -465,7 +467,7 @@ def test_single_case(
 if __name__ == "__main__":
     training_data_root = "/home/chenyan/fallout_data/data/0923_training_data"
     ori_data_root = "/home/chenyan/fallout_data/ori_data/surg_act_09232025"
-    pred_root_dir = "/home/chenyan/fallout_data/data/0923_test_mse_weight_v3/clip"
+    pred_root_dir = "/home/chenyan/fallout_data/data/0923_test_multiframe_mid/grasp"
 
     case_list = [case for case in sorted(os.listdir(pred_root_dir))]
 
@@ -490,7 +492,7 @@ if __name__ == "__main__":
     print("\n=== GLOBAL summary (CANON ) ===")
     print(json.dumps(global_summary, indent=2))
 
-    save_json_path = "/home/chenyan/fallout_data/eval/eval_results_clip_v3.json"
+    save_json_path = "/home/chenyan/fallout_data/eval/grasp_base_mid.json"
     os.makedirs(os.path.dirname(save_json_path), exist_ok=True)
     with open(save_json_path, "w", encoding="utf-8") as f:
         json.dump(per_case_summaries, f, indent=2)

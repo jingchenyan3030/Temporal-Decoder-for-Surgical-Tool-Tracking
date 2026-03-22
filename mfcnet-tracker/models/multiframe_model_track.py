@@ -416,6 +416,7 @@ class TernusNetMultiDETRBasic(nn.Module):
                 tgt = torch.zeros_like(query_pos)  # (Q,B,D)
         else:
             tgt = prev_hs.permute(1, 0, 2).contiguous()  # (Q, B, d_model)
+            tgt = tgt + 0.0 * self.tgt_embed.weight.unsqueeze(1).repeat(1, B, 1)
 
         # 7. DETR decoder
         hs = self.decoder(tgt, memory, query_pos=query_pos, pos=pos)  # (Q, B, d_model)

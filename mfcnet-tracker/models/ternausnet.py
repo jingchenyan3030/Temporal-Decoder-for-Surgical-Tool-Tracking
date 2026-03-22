@@ -142,8 +142,8 @@ class TernausNet16(nn.Module):
         dec2 = self.dec2(torch.cat([dec3, conv2], 1))
         dec1 = self.dec1(torch.cat([dec2, conv1], 1))
 
-        '''
-        segmentation output
+        
+        #segmentation output
         if self.num_classes > 1:
             x_out = F.log_softmax(self.final(dec1), dim=1)
         else:
@@ -151,4 +151,5 @@ class TernausNet16(nn.Module):
         '''
         # mse output
         x_out = self.final(dec1)
+        '''
         return x_out

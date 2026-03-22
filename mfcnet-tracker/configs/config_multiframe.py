@@ -97,22 +97,23 @@ def train_config_parser(parser):
 
 def test_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--action', type=str, default='cut', choices=['grasp', 'clip','dissect', 'cut'], 
+    parser.add_argument('--action', type=str, default='grasp', choices=['grasp', 'clip','dissect', 'cut'], 
                         help='Mode of operation. Default: cut')
-    parser.add_argument('--data_dir', type=str, default='/data/home/hao/chenyan/data/act_training_data_by_action', 
+    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
                         help='Path to data directory. Default: /data/home/hao/chenyan/data/act_training_data_by_action')
-    parser.add_argument('--dataset', type=str, default='ACT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT', 'ACT'], # should change but not change
-                        help='Dataset name. Default: ACT')
-    parser.add_argument('--prediction_task', type=str, default='keypoint_heatmap', 
+    parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT', 'ACT'], # should change but not change
+                        help='Dataset name. Default: KPT')
+    parser.add_argument('--prediction_task', type=str, default='keypoint_segmentation', 
                         choices=['tooltip_segmentation', 'toolpose_segmentation', 'endovis15_segmentation', 'binary', 'keypoint_segmentation','keypoint_heatmap'], 
-                        help='Prediction task. Default: keypoint_heatmap')
+                        help='Prediction task. Default: keypoint_segmentation')
     parser.add_argument('--num_frames_per_video', type=int, default=1000, 
                         help='Number of frames per video/folder in the dataset. Default: 225')
     parser.add_argument('--num_input_frames', type=int, default=8,
                         help='Number of input frames for the model. Default: 8')
+    parser.add_argument('--track', type = int, default=0,choices=[0,1])
     
     # I/O related arguments
-    parser.add_argument('--expt_savedir', type=str, default='/data/home/hao/chenyan/checkpoint/testing_multiframe_act', 
+    parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint/testing_multiframe_kpt_mse_nosoftmax', 
                         help='Path to save experiment results. Default: /data/home/hao/chenyan/checkpoint/testing_multiframe_act')
     parser.add_argument('--expt_name', type=str, default='multiframe_expt',
                         help='Experiment name. Default: multiframe_expt')
@@ -137,7 +138,7 @@ def test_config_parser(parser):
                         help='Use pre-trained weights. Default: False')
     parser.add_argument('--load_wts_base_model', type=str, default= None,
                         help='Path to base model weights from a pretrained per-frame model. Default: None')
-    parser.add_argument('--load_wts_model', type=str, default='/data/home/hao/chenyan/checkpoint/multiframe_segmentation_expt_act_cut_final/ckpts/model_010.pth', 
+    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/grasp_base/model_010.pth', 
                         help='Path to model weights. Default: None')
     parser.add_argument('--input_height', type=int, default=256, help='NN input image height')
     parser.add_argument('--input_width', type=int, default=320, help='NN input image width')

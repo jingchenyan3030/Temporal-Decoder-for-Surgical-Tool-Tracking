@@ -166,7 +166,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
 
     out_file = out_dir / f"{p.stem}_points.png"
     print(f"INPUT → {img_path}  ||  OUTPUT → {out_file}")
+    '''
     cv2.imwrite(str(out_file), cv2.cvtColor(img_copy, cv2.COLOR_RGB2BGR))
+    '''
 
 
 def main(): 
@@ -316,8 +318,8 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         with open(json_path, "w") as f:
                             json.dump(video_pred, f, indent=2)
 
-                        vis_keypoints = prepare_vis_keypoints(results, b, pred_mask, contact_id=3)
-                        save_points_prediction(args, img_path, vis_keypoints, ori_img)
+                        #vis_keypoints = prepare_vis_keypoints(results, b, pred_mask, contact_id=3)
+                        #save_points_prediction(args, img_path, vis_keypoints, ori_img)
 
                     step = end
                 else:

@@ -188,36 +188,53 @@ def main_worker(args):
             model.module.base_model.eval()
             model.module.multiframe_net.train()
 
-        try: 
-            logging.info('Training, current LR: {}'.format(scheduler.get_last_lr()))
-            model, loss = train_one_epoch(train_dataloader, epoch, model, optimizer, args, logger, writer, optflow_model=optflow_model)
-            logging.info("Epoch: {}, Loss: {:.5f}".format(epoch, loss))
+        try:
+            # ---- Train ----
+            if args.global_rank == 0:
+                logger.info(f"Training, current LR: {scheduler.get_last_lr()}")
+
+            model, loss = train_one_epoch(
+                train_dataloader, epoch, model, optimizer, args, logger, writer,
+                optflow_model=optflow_model
+            )
+
+            if args.global_rank == 0:
+                logger.info(f"Epoch: {epoch}, Loss: {loss:.5f}")
+
             scheduler.step()
 
-            # Validation
-            metrics = None
-            if args.global_rank==0:
-                if args.prediction_task != 'keypoint_heatmap':
-                    model.eval()
-                    with torch.no_grad():
-                        metrics = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
-                        logging.info(json.dumps(metrics))
-                else:
-                    model.eval()
-                    with torch.no_grad():
-                        val_loss = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
-                        logging.info(json.dumps(val_loss))
             if dist.is_initialized():
                 dist.barrier()
 
-            if args.global_rank == 0 and epoch%args.save_freq==0:
+            # ---- Validation (ALL ranks run, rank0 log) ----
+            model.eval()
+            with torch.no_grad():
+                if args.prediction_task != 'keypoint_heatmap':
+                    metrics = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
+                    val_out = metrics
+                else:
+                    val_loss = validate(val_dataloader, model, args, logger, writer, epoch, optflow_model=optflow_model)
+                    val_out = val_loss
+
+            if dist.is_initialized():
+                dist.barrier()
+
+            if args.global_rank == 0:
+                logger.info(json.dumps(val_out))
+
+            # ---- Save (rank0 only) ----
+            if args.global_rank == 0 and (epoch % args.save_freq == 0):
                 save_model(model.module, args.ckpt_dir, optimizer=optimizer, epoch=epoch)
-        except KeyboardInterrupt: 
-            logging.info('Ctrl+C, saving snapshot')
+
+            if dist.is_initialized():
+                dist.barrier()
+
+        except KeyboardInterrupt:
+            logger.info("Ctrl+C, saving snapshot")
             if args.global_rank == 0:
                 save_model(model.module, args.ckpt_dir, optimizer=optimizer, epoch=epoch)
-            logging.info('Done.')
-            return 
+            logger.info("Done.")
+            return
 
 
 if __name__ == '__main__':

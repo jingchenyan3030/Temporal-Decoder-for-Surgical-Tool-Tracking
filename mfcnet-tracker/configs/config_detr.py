@@ -93,18 +93,22 @@ def train_config_parser(parser):
     parser.add_argument('--add_optflow_inputs', type=bool, default=False, help='Add optical flow inputs')
     parser.add_argument('--optflow_model', type=str, default='RAFT', choices=['RAFT', 'FlowFormerPlusPlus'],)
     parser.add_argument('--add_depth_inputs', type=bool, default=True, help='Add monocular depth inputs')
+    parser.add_argument('--loss_wts', type=float, nargs='+', default=[1.0], 
+                        help='List of loss weights. Default: 1.0')
+    parser.add_argument('--track', type = int, default=0,choices=[0,1])
+    
     return parser
 
 def test_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--action', type=str, default='grasp', choices=['grasp', 'clip','dissect', 'cut'], 
-                        help='Mode of operation. Default: grasp')
-    parser.add_argument('--data_dir', type=str, default='/data/home/hao/chenyan/data/0923_by_action', 
-                        help='Path to data directory. Default: /data/home/hao/chenyan/data/0923_by_action')
+    parser.add_argument('--action', type=str, default='clip', choices=['grasp', 'clip','dissect', 'cut'], 
+                        help='Mode of operation. Default: clip')
+    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
+                        help='Path to data directory. Default:/home/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT', 'ACT'], # should change but not change
                         help='Dataset name. Default: KPT')
-    parser.add_argument('--prediction_task', type=str, default='keypoint_heatmap', 
-                        choices=['tooltip_segmentation', 'toolpose_segmentation', 'endovis15_segmentation', 'binary', 'keypoint_segmentation','keypoint_heatmap'], 
+    parser.add_argument('--prediction_task', type=str, default='detr_keypoint', 
+                        choices=['tooltip_segmentation', 'toolpose_segmentation', 'endovis15_segmentation', 'binary', 'keypoint_segmentation','keypoint_heatmap', 'detr_keypoint'], 
                         help='Prediction task. Default: keypoint_heatmap')
     parser.add_argument('--num_frames_per_video', type=int, default=1000, 
                         help='Number of frames per video/folder in the dataset. Default: 225')
@@ -112,32 +116,32 @@ def test_config_parser(parser):
                         help='Number of input frames for the model. Default: 8')
     
     # I/O related arguments
-    parser.add_argument('--expt_savedir', type=str, default='/data/home/hao/chenyan/checkpoint/testing_multiframe_kpt_mse', 
-                        help='Path to save experiment results. Default: /data/home/hao/chenyan/checkpoint/testing_multiframe_kpt_mse')
-    parser.add_argument('--expt_name', type=str, default='multiframe_expt',
-                        help='Experiment name. Default: multiframe_expt')
+    parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
+                        help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
+    parser.add_argument('--expt_name', type=str, default='multiframe_segmentation_expt_kpt_clip_detr',
+                        help='Experiment name. Default: multiframe_multiframe_segmentation_expt_kpt_clip_detrexpt')
     parser.add_argument('--print_freq', type=int, default=1, 
                         help='Print frequency. Default: 1')
     parser.add_argument('--save_output_freq', type=int, default=1, 
                         help='Save output frequency. Default: 1')
 
     # optimizer related arguments
-    parser.add_argument('--num_workers', type=int, default=12, help='Number of workers for dataloader. Default: 12')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for dataloader. Default: 12')
     parser.add_argument('--seed', type=int, default=42, 
                         help='Seed for random number generator. Default: 42')
     parser.add_argument('--resume', type=bool, default=False, 
                         help='Resume training. Default: False')
     
     # model related arguments   
-    parser.add_argument('--model_type', type=str, default='TernausNetMulti-Basic', 
+    parser.add_argument('--model_type', type=str, default='TernusNetMultiDETRBasic', 
                         choices=['TernausNetMulti-Basic', 'TernausNetMulti-Large', 'DeepLabMulti-Basic', 'DeepLabMulti-Large', 
-                                 'FCNMulti-Basic', 'FCNMulti-Large', 'SegFormerMulti-Basic', 'SegFormerMulti-Large', 'HRNetMulti-Basic', 'HRNetMulti-Large'],  
+                                 'FCNMulti-Basic', 'FCNMulti-Large', 'SegFormerMulti-Basic', 'SegFormerMulti-Large', 'HRNetMulti-Basic', 'HRNetMulti-Large', 'TernusNetMultiDETRBasic'],  
                         help='Model name')
     parser.add_argument('--pretrained', type=bool, default=False, 
                         help='Use pre-trained weights. Default: False')
     parser.add_argument('--load_wts_base_model', type=str, default= None, 
                         help='Path to base model weights from a pretrained per-frame model. Default: None')
-    parser.add_argument('--load_wts_model', type=str, default='/data/home/hao/chenyan/checkpoint/multiframe_segmentation_expt_kpt_grasp_mse_sam_full/ckpts/model_006.pth', 
+    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_detr_full/ckpts/model_010.pth', 
                         help='Path to model weights. Default: None')
     parser.add_argument('--input_height', type=int, default=256, help='NN input image height')
     parser.add_argument('--input_width', type=int, default=320, help='NN input image width')
@@ -157,6 +161,9 @@ def test_config_parser(parser):
     parser.add_argument('--num_classes', type=int, default=2)
     parser.add_argument('--metric_fns', type=str, nargs='+', default=[],
                     help='Heatmap task: keep empty.') 
+    parser.add_argument('--loss_wts', type=float, nargs='+', default=[1.0], 
+                        help='List of loss weights. Default: 1.0')
+    parser.add_argument('--track', type = int, default=0,choices=[0,1])
     
     return parser
 
