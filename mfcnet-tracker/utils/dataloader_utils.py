@@ -324,6 +324,106 @@ def get_KPT_dataset_filenames(args):
         raise ValueError(f"Unknown mode: {args.mode}")
 
 
+def get_KPT_refine_dataset_filenames(args):
+    root = Path(args.data_dir)
+    all_cases = natsorted(
+        [d for d in root.iterdir() if d.is_dir() and d.name.lower() != "test" and d.name.lower() != "test_multiframe"],
+        key=str
+    )
+
+    actions = ['grasp','clip','cut','dissect']
+    if hasattr(args, "action") and args.action in actions:
+        actions = [args.action] 
+    elif hasattr(args, "action") and args.action not in actions and args.action is not None:
+        print(f"[Warning] Unknown action '{args.action}', proceeding with all actions.")
+       
+    for action in actions:
+        train_files = []
+        val_files = []
+        test_files = []
+        action_dir = root / action
+        if not action_dir.exists():
+            raise ValueError(f"Action directory '{action}' does not exist in the dataset root.")
+        
+        all_cases = natsorted(
+            [d for d in action_dir.iterdir() if d.is_dir()],
+            key=str
+        )
+
+        case_dirs = [d for d in all_cases if d.name.lower().startswith("case_")]
+        cholec_dirs = [d for d in all_cases if d.name.lower().startswith("cholec")]
+        comp_dirs = [d for d in all_cases if d.name.lower().startswith("comprehensive")]
+        heichole_dirs = [d for d in all_cases if d.name.lower().startswith("heichole")]
+        youtube_dirs = [d for d in all_cases if d.name.lower().startswith("youtube_cholecystectomy")]
+
+        def split_dirs(dirs, num_test):
+            if len(dirs) <= num_test:
+                return [], dirs
+            return dirs[:-num_test], dirs[-num_test:]
+
+        train_cases, test_cases = [], []
+
+        for group, num_test in [
+            (case_dirs, 2),
+            (cholec_dirs, 2),
+            (comp_dirs, 1),
+            (heichole_dirs, 2),
+            (youtube_dirs, 1),
+        ]:
+            train, test = split_dirs(group, num_test)
+            train_cases.extend(train)
+            test_cases.extend(test)
+        
+        val_cases = train_cases[-5:] if len(train_cases) > 5 else []
+
+        def collect(cases):
+            files = []
+
+            for case in cases:
+                for video_dir in natsorted(case.iterdir(), key=str):
+
+                    img_dir  = video_dir / "images"
+                    heatmap_coarse_dir  = video_dir / "heatmap_coarse"
+                    mask_coarse_dir = video_dir / "mask_coarse"
+                    gt_heatmap_dir =  video_dir / "sam_results"
+
+                    if not img_dir.exists() or not heatmap_coarse_dir.exists() or not mask_coarse_dir.exists() or not gt_heatmap_dir.exists():
+                        continue
+
+                    images = natsorted(
+                        [p for p in img_dir.glob("*") if p.suffix.lower() in [".png",".jpg",".jpeg"]],
+                        key=str
+                    )
+                    coarse_heatmap = natsorted([p for p in heatmap_coarse_dir.glob("frame_*.npy")], key=str)
+                    coarse_mask = natsorted([p for p in mask_coarse_dir.glob("frame_*.npy")], key=str)
+                    gt_heatmap = natsorted([p for p in gt_heatmap_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")], key=str)
+
+                    if not (len(images) == len(coarse_heatmap) == len(coarse_mask)==len(gt_heatmap)):
+                        print(
+                            f"[DROP VIDEO] {video_dir} "
+                            f"images={len(images)} coarse={len(coarse_heatmap)} npy={len(coarse_mask)} gt={len(gt_heatmap)}  "
+                        )
+                        continue
+                    files.extend(images)
+                   
+            return files
+
+
+        train_files = collect(train_cases)
+        val_files = collect(val_cases)
+        test_files = collect(test_cases)
+
+
+    if args.mode == 'training':
+        return train_files, val_files
+    elif args.mode == 'testing':
+        return test_files, None
+    elif args.mode == 'all':
+        all_files = collect(all_cases)
+        return all_files, None
+    else:
+        raise ValueError(f"Unknown mode: {args.mode}")
+
 ## new adding end
 def get_ACT_dataset_filenames(args):
     root = Path(args.data_dir)

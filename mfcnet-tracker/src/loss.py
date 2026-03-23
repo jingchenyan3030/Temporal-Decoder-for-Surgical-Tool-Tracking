@@ -56,6 +56,8 @@ class LossMSE(nn.Module):
         per_sample = (per_channel * cw).sum(dim=1) / (cw.sum() + 1e-12)  # (B,)
         return per_sample.mean()
 '''
+# heatmap_valid[:,0]:tip ; heatmap_valid[:,1]:anchor
+'''
 class LossMSE:
     def __init__(self, beta=1.0, eps=1e-6):
         self.beta = beta
@@ -78,7 +80,36 @@ class LossMSE:
         loss = (diff * weight).mean()
 
         return loss
+'''
+class LossMSE:
+    def __init__(self, beta=1.0, eps=1e-6):
+        self.beta = beta
+        self.eps = eps
 
+    def __call__(self, outputs, targets, sam=None, heatmap_valid=None):
+        diff = (outputs - targets) ** 2   # [B, C, H, W]
+
+        # spatial weighting
+        if sam is not None:
+            if sam.dim() == 3:
+                sam = sam.unsqueeze(1)   # [B,1,H,W]
+            sam = sam.float().to(outputs.device)
+            sam = (sam > 0).float()
+            weight = 1 + self.beta * sam
+            diff = diff * weight
+
+        # channel loss
+        per_channel_loss = diff.mean(dim=(2, 3))   # [B, C]
+
+        # channel valid mask
+        if heatmap_valid is None:
+            return per_channel_loss.mean()
+
+        heatmap_valid = heatmap_valid.float().to(outputs.device)   # [B, C]
+
+        loss = (per_channel_loss * heatmap_valid).sum() / (heatmap_valid.sum() + self.eps)
+
+        return loss
 class LossNLL: 
     def __init__(self, class_weights=None, num_classes=1):
         if class_weights is not None:

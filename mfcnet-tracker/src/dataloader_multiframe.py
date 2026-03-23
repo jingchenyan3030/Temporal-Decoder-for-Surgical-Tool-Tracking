@@ -39,6 +39,8 @@ class to_tensor(object):
             tensor_dict['sam_weight'] = torch.from_numpy(sample['sam_weight'].astype(np.float32))
         if 'valid' in sample:
             tensor_dict['valid'] = torch.as_tensor(sample['valid'], dtype=torch.bool)
+        if 'heatmap_valid' in sample:
+            tensor_dict['heatmap_valid'] = torch.from_numpy(sample['heatmap_valid'].astype(np.float32))
         return tensor_dict
     
 class customResize(object):
@@ -86,7 +88,8 @@ class customResize(object):
             resized_dict['sam_weight'] = transforms.Resize(
                 self.img_size, interpolation=tF.InterpolationMode.NEAREST
             )(sample['sam_weight'])
-
+        if 'heatmap_valid' in sample:
+            resized_dict['heatmap_valid'] = sample['heatmap_valid']
         return resized_dict
 
 class customRandomRotate(object): 
@@ -107,7 +110,8 @@ class customRandomRotate(object):
 
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             rotated_dict['sam_weight'] = tF.rotate(sample['sam_weight'], angle, interpolation=tF.InterpolationMode.NEAREST)
-
+        if 'heatmap_valid' in sample:
+            rotated_dict['heatmap_valid'] = sample['heatmap_valid']       
         return rotated_dict
 
 class customRandomHSVDistortion(object): 
@@ -133,6 +137,8 @@ class customRandomHSVDistortion(object):
             distorted_dict['input_depth'] = input_depth 
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             distorted_dict['sam_weight'] = sample['sam_weight']
+        if 'heatmap_valid' in sample and sample['heatmap_valid'] is not None:
+            distorted_dict['heatmap_valid'] = sample['heatmap_valid']
         return distorted_dict
 
 class customHorizontalFlip(object): 
@@ -255,6 +261,8 @@ class customNormalize(object):
             normalized_dict['sam_weight'] = sample['sam_weight']
         if 'valid' in sample:
             normalized_dict['valid'] = sample['valid']
+        if 'heatmap_valid' in sample:
+            normalized_dict['heatmap_valid'] = sample['heatmap_valid']
         return normalized_dict
 
 # New Adding for DETR:
@@ -465,7 +473,59 @@ def get_data_loader(args):
                                         add_depth_inputs=args.add_depth_inputs)
                 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
                                         num_workers=args.num_workers, pin_memory=True)
-                return None, test_loader            
+                return None, test_loader  
+    elif args.dataset == 'KPT_refine':
+        if args.mode == 'training': 
+            train_file_names, val_file_names = get_KPT_dataset_filenames(args)
+            train_transform = get_act_transform('train', args)
+            val_transform = get_act_transform('val', args)
+            train_dataset = KPT_test_mid(train_file_names, train_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
+                                    # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+            val_dataset = KPT_test_mid(val_file_names, val_transform,
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames,
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+                
+            world_size = getattr(args, 'world_size', 1)
+            global_rank = getattr(args, 'global_rank', 0)
+            if world_size > 1:
+                    train_sampler = DistributedSampler(
+                        train_dataset,
+                        num_replicas=world_size,
+                        rank=global_rank,
+                        shuffle=True,
+                        drop_last = True,
+                    )
+                    shuffle_train = False
+
+                    val_sampler = None
+
+            else:
+                    train_sampler = None
+                    val_sampler = None
+                    shuffle_train = True
+
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=shuffle_train,
+                        sampler=train_sampler, num_workers=args.num_workers, pin_memory=True, drop_last = True, persistent_workers=(args.num_workers > 0),)
+
+            val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
+                        sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
+            return train_loader, val_loader
+        else: 
+            test_file_names, _ = get_KPT_dataset_filenames(args)
+            test_transform = get_act_transform('test', args)
+            test_dataset = KPT_test_mid(test_file_names, test_transform, 
+                                        mode=args.mode, prediction_task=args.prediction_task,
+                                        num_input_frames=args.num_input_frames, 
+                                        # num_frames_per_video=args.num_frames_per_video, 
+                                        add_depth_inputs=args.add_depth_inputs)
+            test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
+                                        num_workers=args.num_workers, pin_memory=True)
+            return None, test_loader         
     else: 
         raise NotImplementedError
 

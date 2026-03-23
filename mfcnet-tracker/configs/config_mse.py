@@ -23,8 +23,8 @@ def train_config_parser(parser):
     # I/O related arguments
     parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
                         help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
-    parser.add_argument('--expt_name', type=str, default='multiframe_clip_mse_sam_v3',
-                        help='Experiment name. Default: multiframe_clip_mse_sam_v3')
+    parser.add_argument('--expt_name', type=str, default='multiframe_clip_drop',
+                        help='Experiment name. Default: multiframe_clip_mse_sam_drop')
     parser.add_argument('--print_freq', type=int, default=1, 
                         help='Print frequency. Default: 1')
     parser.add_argument('--save_freq', type=int, default=1,

@@ -8,16 +8,16 @@ from torchvision.models.segmentation.fcn import FCNHead
 from torchvision import models
 from .ternausnet import TernausNet11, TernausNet16
 from .tap_model import TAPNet11, TAPNet16
-
+'''
 # segmentation multi-frame models
 from .multiframe_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
-
 '''
+
 # mse multi-frame models
 from .multiframe_mse_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
-'''
+
 
 '''
 from .multiframe_model_detr import TernusNetMultiDETRBasic, TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
@@ -111,3 +111,4 @@ def get_multiframe_segmentation_model(args):
     else:
         raise ValueError(f"Model type {args.model_type} not recognized")
     return model
+

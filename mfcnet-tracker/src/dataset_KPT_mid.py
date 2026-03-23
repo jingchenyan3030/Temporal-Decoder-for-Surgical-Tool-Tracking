@@ -168,6 +168,27 @@ class KPT_test_mid(Dataset):
                 sam_weight = np.load(str(sam_weight_path)).astype(np.float32)
             else:
                 sam_weight = np.ones(mask.shape, dtype=np.float32)
+            # 4. visibility for sam_mask
+            detr_dir = tgt_root / 'points_detr'
+            json_path = detr_dir / (img_t.stem + ".json")
+            if not json_path.exists():
+                raise FileNotFoundError(f"Missing DETR points: {json_path}")
+            with open(json_path, 'r') as f:
+                plist = json.load(f)
+            if not isinstance(plist, list):
+                raise ValueError(f"DETR points file corrupted: {json_path}")   
+            tip_vis = 0
+            anchor_vis = 0
+            tip_flags = []
+            for p in plist:
+                lab = p.get("label","")
+                vis = 1 if bool(p.get("visibility",True)) else 0
+
+                if lab == "tool_tip":
+                    tip_flags.append(vis)
+                elif lab == "tool_anchor":
+                    anchor_vis = vis
+            tip_vis = 1 if any(tip_flags) else 0        
         elif self.prediction_task == 'detr_keypoint':
             TIP_LABEL =  "tool_tip"
             ANCHOR_LABEL = "tool_anchor"
@@ -259,6 +280,7 @@ class KPT_test_mid(Dataset):
         }
         if self.prediction_task == 'keypoint_heatmap':
             sample['sam_weight'] = sam_weight
+            sample['heatmap_valid'] = np.array([tip_vis, anchor_vis], dtype=np.float32)
         if self.prediction_task == 'detr_keypoint':
             sample['points'] = points
             sample['labels'] = labels
