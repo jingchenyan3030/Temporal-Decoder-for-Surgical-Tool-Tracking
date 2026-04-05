@@ -3,84 +3,59 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np 
 
-def get_loss(outputs, targets, loss_fns, loss_wts, args, sam_weight=None, heatmap_valid=None):
+def get_loss(outputs, targets, loss_fns, loss_wts, args,
+             sam_weight=None, heatmap_valid=None,
+             aux_mask_target=None, aux_mask_weight=0.05):
     loss_dict = {} 
     total_loss = 0.0
+    if isinstance(outputs, dict):
+        heatmap_outputs = outputs['heatmap']
+        aux_mask_outputs = outputs.get('aux_mask', None)
+    else:
+        heatmap_outputs = outputs
+        aux_mask_outputs = None
+    # main loss
     for loss_fn, loss_wt in zip(loss_fns, loss_wts):
         if loss_fn == 'mse':
             mse_loss = LossMSE()
-            loss = mse_loss(outputs, targets, sam=sam_weight, heatmap_valid=heatmap_valid)
+            loss = mse_loss(heatmap_outputs, targets, sam=sam_weight, heatmap_valid=heatmap_valid)
         elif loss_fn == 'nll':
-            loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(outputs, targets)
+            loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(heatmap_outputs, targets)
         elif loss_fn == 'soft_jaccard':
-            loss = LossSoftJaccard(num_classes=args.num_classes)(outputs, targets)
+            loss = LossSoftJaccard(num_classes=args.num_classes)(heatmap_outputs, targets)
         else: 
             raise ValueError(f'Loss function {loss_fn} not implemented')
         total_loss += loss_wt * loss
         loss_dict['loss_' + loss_fn] = loss.item()
+    aux_loss = torch.tensor(0.0, device= heatmap_outputs.device)
+    if aux_mask_outputs is not None and aux_mask_target is not None:
+        if aux_mask_target.dim() == 3:
+            aux_mask_target = aux_mask_target.unsqueeze(1)   # [B,1,H,W]
+
+        aux_mask_target = aux_mask_target.float().to(aux_mask_outputs.device)
+
+        # ignore all-zero masks
+        valid_mask = (aux_mask_target.flatten(1).sum(dim=1) > 0)   # [B]
+
+        if valid_mask.any():
+            pred_valid = aux_mask_outputs[valid_mask]      # [B,1,H,W]
+            target_valid = aux_mask_target[valid_mask]     # [B,1,H,W]
+
+            aux_loss = F.binary_cross_entropy_with_logits(
+                pred_valid,
+                target_valid
+            )
+
+            total_loss += aux_mask_weight * aux_loss
+
+    loss_dict['loss_aux_mask'] = aux_loss.item()
     loss_dict['loss_total'] = total_loss.item()
+
     return total_loss, loss_dict
+
 
 import torch
 import torch.nn as nn
-'''
-class LossMSE(nn.Module):
-    def __init__(self, eps=1e-6, channel_weights=(1.0, 1.3)):
-        super().__init__()
-        self.eps = eps
-        self.register_buffer("channel_weights", torch.tensor(channel_weights, dtype=torch.float32))
-
-    def forward(self, outputs, targets, sam_weight=None):
-        outputs = outputs.float()
-        targets = targets.float()
-        assert outputs.shape == targets.shape
-        B, C, H, W = outputs.shape
-
-        diff = (outputs - targets) ** 2  # (B,C,H,W)
-
-        if sam_weight is None:
-            per_channel = diff.mean(dim=(2, 3))  # (B,C)
-        else:
-            Wt = sam_weight.float()
-            if Wt.dim() == 5:
-                Wt = Wt.squeeze(1)
-            assert Wt.shape == outputs.shape
-
-            num = (Wt * diff).sum(dim=(2, 3))                 # (B,C)
-            den = Wt.sum(dim=(2, 3)).clamp_min(self.eps)      # (B,C)
-            per_channel = num / den
-
-        cw = self.channel_weights.to(per_channel.device).view(1, C)
-        per_sample = (per_channel * cw).sum(dim=1) / (cw.sum() + 1e-12)
-        # scale-stable weighted average over channels
-        per_sample = (per_channel * cw).sum(dim=1) / (cw.sum() + 1e-12)  # (B,)
-        return per_sample.mean()
-'''
-# heatmap_valid[:,0]:tip ; heatmap_valid[:,1]:anchor
-'''
-class LossMSE:
-    def __init__(self, beta=1.0, eps=1e-6):
-        self.beta = beta
-        self.eps = eps
-
-    def __call__(self, outputs, targets, sam=None):
-
-        diff = (outputs - targets)**2
-
-        if sam is None:
-            return diff.mean()
-
-        if sam.dim()==3:
-            sam = sam.unsqueeze(1)
-
-        sam = (sam > 0).float()
-
-        weight = 1 + self.beta * sam
-
-        loss = (diff * weight).mean()
-
-        return loss
-'''
 class LossMSE:
     def __init__(self, beta=1.0, eps=1e-6):
         self.beta = beta

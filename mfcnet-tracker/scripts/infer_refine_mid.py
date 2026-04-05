@@ -13,7 +13,7 @@ import logging, json, random, time, math
 from pathlib import Path
 
 import configargparse
-from configs.config_mse import test_config_parser as config_parser
+from configs.config_refine_mid import test_config_parser as config_parser
 
 import cv2 
 import numpy as np
@@ -26,7 +26,7 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from src.dataloader_multiframe import get_data_loader
 from models import get_multiframe_segmentation_model as get_model
-from utils.dataloader_utils import get_MICCAI2017_dataset_filenames, get_JIGSAWS_dataset_filenames, get_MICCAI2015_dataset_filenames, get_ACT_dataset_filenames, get_KPT_dataset_filenames
+from utils.dataloader_utils import get_MICCAI2017_dataset_filenames, get_JIGSAWS_dataset_filenames, get_MICCAI2015_dataset_filenames, get_ACT_dataset_filenames, get_KPT_dataset_filenames, get_all_image_files
 from utils.log_utils import AverageMeter, ProgressMeter
 from utils.model_utils import load_model_weights
 from utils.train_utils import add_metrics_meters
@@ -35,45 +35,6 @@ from utils.localization_utils_v2 import centroid_error_10_classes, centroid_erro
 from sklearn.metrics import confusion_matrix, precision_score, recall_score
 from src.HeatmapParser import HeatmapParser
 
-# predicted heatmap:
-def save_pred_heatmaps(hm, ori_img, save_dir, frame_name, class_names = ('tip','anchor'), cmap=cv2.COLORMAP_VIRIDIS):
-    save_dir.mkdir(parents=True, exist_ok=True)
-    for c, cname in enumerate(class_names):
-        if c >= hm.shape[0]:
-            continue
-        class_map = hm[c]
-
-        # normalize like SAM2
-        vmin = class_map.min()
-        vmax = class_map.max()
-        norm = (class_map - vmin) / (vmax - vmin + 1e-6)
-        norm = (norm * 255).astype(np.uint8)
-
-        color_hm = cv2.applyColorMap(norm, cmap)
-        '''
-        # 1) pure heatmap
-        cv2.imwrite(
-            str(save_dir / f"{frame_name}_heatmap_{cname}.png"),
-            color_hm
-        )
-
-        # 2) overlay
-        overlay = cv2.addWeighted(ori_img, 0.7, color_hm, 0.3, 0)
-        cv2.imwrite(
-            str(save_dir / f"{frame_name}_overlay_{cname}.png"),
-            cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
-        )
-        '''
-        print(
-    f"[DEBUG] {frame_name} | "
-    f"tip max={hm[0].max():.4f}, "
-    f"anchor max={hm[1].max():.4f}"
-)
-
-    return
-
-
-# denormalize the image for visualization
 def postprocess_image(tensor_img):
     mean = np.array([0.485, 0.456, 0.406]).reshape((3,1,1))
     std  = np.array([0.229, 0.224, 0.225]).reshape((3,1,1))
@@ -81,51 +42,30 @@ def postprocess_image(tensor_img):
     ori_img = (np.transpose(ori_img, (1,2,0)) * 255).astype(np.uint8)
     return ori_img
 
-# integrate 4 points
-def prepare_vis_keypoints(results, b, pred_mask, contact_id=3):
-    vis_keypoints = {
-        'tip': results['tip'][b],
-        'anchor': results['anchor'][b],
-    }
-    return vis_keypoints
+def save_points_overlay(video_dir, frame_name, tip_list, anchor_list, input_rgb):
+    """
+    Save predicted tip/anchor points overlaid on the resized network input image.
+    """
+    overlay_dir = video_dir / "pred_overlay"
+    overlay_dir.mkdir(parents=True, exist_ok=True)
 
+    img = input_rgb.copy()
 
+    for pt in tip_list:
+        if len(pt) < 2:
+            continue
+        x, y = int(round(pt[0])), int(round(pt[1]))
+        cv2.circle(img, (x, y), radius=4, color=(255, 255, 0), thickness=-1)  # RGB yellow
 
-# Adding:
-def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
-    p = Path(img_path)
-    rel = p.relative_to(args.data_dir)
+    for pt in anchor_list:
+        if len(pt) < 2:
+            continue
+        x, y = int(round(pt[0])), int(round(pt[1]))
+        cv2.circle(img, (x, y), radius=4, color=(255, 0, 0), thickness=-1)    # RGB red
 
-    parts = list(rel.parts)
-    if "images" in parts:
-        idx = parts.index("images")
-        out_rel = Path(*parts[:idx]) / "pred"
-    else:
-        out_rel = rel.parent / "pred"
-
-    if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_v3" / out_rel
-    else:
-        out_dir = Path(args.data_dir).parent / "0923_test_mse_weight_v2" / out_rel
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    img_copy = input_rgb.copy()
-    for name, keypoints in keypoints_dict.items():
-        color = (255, 255, 0) if name == "tip" else (255, 0, 0) if name == "anchor" else (0, 255, 0)
-        for (x, y, score) in keypoints:
-            cv2.circle(
-                img_copy,
-                (int(round(x)), int(round(y))),
-                radius=3,
-                color=color,
-                thickness=-1
-            )
-
-    out_file = out_dir / f"{p.stem}_points.png"
-    print(f"INPUT → {img_path}  ||  OUTPUT → {out_file}")
-  
-    cv2.imwrite(str(out_file), cv2.cvtColor(img_copy, cv2.COLOR_RGB2BGR))
-  
+    out_path = overlay_dir / f"{frame_name}_points.png"
+    cv2.imwrite(str(out_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    print(f"[OK] saved overlay: {out_path}")
 
 
 def main(): 
@@ -133,6 +73,23 @@ def main():
     parser = config_parser(parser) 
     args = parser.parse_args() 
     main_worker(args) 
+
+def save_points_json(video_dir, frame_name, tip_list, anchor_list, H, W):
+    json_path = video_dir / "pred_points.json"
+    if json_path.exists():
+        with open(json_path, "r") as f:
+            video_pred = json.load(f)
+    else:
+        video_pred = {}
+    video_pred[frame_name] = {
+        "W_pred": int(W),
+        "H_pred": int(H),
+        "tip": tip_list,
+        "anchor": anchor_list,
+    }
+    with open(json_path, "w") as f:
+        json.dump(video_pred, f, indent=2)
+    print(f"[OK] saved json: {json_path} | frame={frame_name}")
 
 def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=None, optflow_model=None, multi_tracker = None): 
     if args.add_optflow_inputs: 
@@ -197,95 +154,59 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
             end = min(step+B, len(file_names))
             results = heatmap_parser.parse(output.detach())
             for b in range(B):
-                hm = output_heatmaps[b]  # [C, H, W]
                 VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
                 ori_img = postprocess_image(
                     input[VIS_IDX][b, :3, :, :].cpu().numpy()
                 )
+                hm = output_heatmaps[b].astype(np.float32)   
                 img_path = Path(sample['center_path'][b])
-                rel_img_path = os.path.relpath(img_path, str(args.data_dir))
-                frame_name = img_path.stem   
+                frame_name = img_path.stem
+                video_dir = img_path.parent.parent
                 # ===== save heatmaps only =====
-                base_vis_dir = Path(args.data_dir).parent / "testing_multiframe_mse_mid_v2" / "pred_heatmaps"
-                case_name = img_path.parents[1].name
-                heatmap_save_dir = (
-                    Path(args.data_dir).parent.parent
-                    / "testing_multiframe_mse_mid_v2"
-                    / "pred_heatmaps"
-                    / case_name
-                )
-                
-                save_pred_heatmaps(
-                    hm=hm,
-                    ori_img=ori_img,
-                    save_dir=heatmap_save_dir,
+                heatmap_coarse_dir = video_dir / "heatmap_coarse"
+                heatmap_coarse_dir.mkdir(parents=True, exist_ok=True)
+
+                tip_map = hm[0]         # [H, W]
+                anchor_map = hm[1]      # [H, W]
+                hm_hw2 = np.stack([tip_map, anchor_map], axis=-1)   # [H, W, 2]
+                np.save(heatmap_coarse_dir / f"{frame_name}.npy", hm_hw2) 
+                # ===== save predicted points =====
+                tip_pts = results["tip"][b] if "tip" in results else []
+                anchor_pts = results["anchor"][b] if "anchor" in results else []
+                if tip_pts is None or len(tip_pts) == 0:
+                    tip_list = []
+                else:
+                    tip_list = np.asarray(tip_pts, dtype=np.float32).tolist()
+                if anchor_pts is None or len(anchor_pts) == 0:
+                    anchor_list = []
+                else:
+                    anchor_list = np.asarray(anchor_pts, dtype=np.float32).tolist()
+                save_points_json(
+                    video_dir=video_dir,
                     frame_name=frame_name,
-                    class_names=("tip", "anchor")
+                    tip_list=tip_list,
+                    anchor_list=anchor_list,
+                    H=H,
+                    W=W,
                 )
-                
-                if heatmap_parser is not None:
-                    tip_pts    = results["tip"][b] if "tip" in results else []
-                    anchor_pts = results["anchor"][b] if "anchor" in results else []  
-
-                    if tip_pts is None or len(tip_pts) == 0:
-                        tip_list = []
-                    else:
-                        tip_list = np.asarray(tip_pts, dtype=np.float32).tolist()
-
-                    if anchor_pts is None or len(anchor_pts) == 0:
-                        anchor_list = []
-                    else:
-                        anchor_list = np.asarray(anchor_pts, dtype=np.float32).tolist()
-
-                    rel_path_obj = Path(rel_img_path)
-                    parts = rel_path_obj.parts
-                    if "images" in parts:
-                        idx = parts.index("images")
-                        video_rel  = Path(*parts[:idx])
-                    else:
-                        video_rel = rel_path_obj.parent
-
-                    if args.dataset == 'ACT':
-                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse_v3"
-                    else:
-                        base_pred_root = Path(args.data_dir).parent / "0923_test_mse_weight_v2"
-                    
-                    json_dir = base_pred_root / video_rel
-                    json_dir.mkdir(parents=True, exist_ok=True)
-                    json_path = json_dir / "pred_points.json"
-
-                    if json_path.exists():
-                        with open(json_path, 'r') as f:
-                            video_pred = json.load(f)
-                    else:
-                        video_pred = {}
-
-                    video_pred[rel_img_path] = {
-                        "W_pred": W,
-                        "H_pred": H,
-                        "tip": tip_list,
-                        "anchor": anchor_list
-                    }
-                    with open(json_path, 'w') as f:
-                        json.dump(video_pred, f, indent=2)
-
-                    keypoints_dict = {
-                        "tip": tip_pts,
-                        "anchor": anchor_pts
-                    }
-                    save_points_prediction(
-                        args,
-                        img_path,
-                        keypoints_dict,
-                        ori_img
-                    )  
+                img_path = Path(sample['center_path'][b])
+                case_name = img_path.parents[2].name
+                if case_name != "case_001_video_part_001_segment_3":
+                    continue
+                save_points_overlay(
+                    video_dir=video_dir,
+                    frame_name=frame_name,
+                    tip_list=tip_list,
+                    anchor_list=anchor_list,
+                    input_rgb=ori_img,
+                )
 
             step = end
         
     return 
 
 def main_worker(args): 
-    args.mode = 'testing'
+    args.mode = 'generate_coarse'
     args.data_dir = Path(args.data_dir)
     args.log_dir = Path(os.path.join(args.expt_savedir, args.expt_name, 'logs'))
     args.output_dir = Path(os.path.join(args.expt_savedir, args.expt_name, 'outputs'))
@@ -317,10 +238,13 @@ def main_worker(args):
 
     logger.info(f"Checking dataset under {args.data_dir}")
     # get test dataloader
-    if  args.dataset=='ACT':
+    if args.dataset == 'ACT':
         test_file_names, _ = get_ACT_dataset_filenames(args)
-    elif args.dataset=='KPT':
-        test_file_names, _ = get_KPT_dataset_filenames(args)
+    elif args.dataset == 'KPT':
+        if args.mode == 'generate_coarse':
+            test_file_names = get_all_image_files(args)
+        else:
+            test_file_names, _ = get_KPT_dataset_filenames(args)
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
     # print(test_file_names)
@@ -395,7 +319,7 @@ def main_worker(args):
              }
         else:
             CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 10, "max_keep": 2, "threshold": 0.4},
+            0: {"name": "tip", "topk": 10, "max_keep": 2, "threshold": 0.1},
             1: {"name": "anchor", "topk": 5, "max_keep": 1, "threshold":0.15},
             }
     heatmap_parser  = HeatmapParser(CHANNEL_CONFIGS, nms_kernel=3, nms_padding=1)

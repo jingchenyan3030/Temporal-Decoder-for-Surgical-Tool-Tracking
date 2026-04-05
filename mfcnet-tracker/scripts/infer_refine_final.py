@@ -13,7 +13,7 @@ import logging, json, random, time, math
 from pathlib import Path
 
 import configargparse
-from configs.config_mse import test_config_parser as config_parser
+from configs.config_refine_final import test_config_parser as config_parser
 
 import cv2 
 import numpy as np
@@ -24,9 +24,9 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms
 from collections import defaultdict
 import matplotlib.pyplot as plt
-from src.dataloader_multiframe import get_data_loader
+from src.dataloader_refine import get_data_loader
 from models import get_multiframe_segmentation_model as get_model
-from utils.dataloader_utils import get_MICCAI2017_dataset_filenames, get_JIGSAWS_dataset_filenames, get_MICCAI2015_dataset_filenames, get_ACT_dataset_filenames, get_KPT_dataset_filenames
+from utils.dataloader_utils import get_ACT_dataset_filenames, get_KPT_dataset_filenames, get_KPT_refine_dataset_filenames
 from utils.log_utils import AverageMeter, ProgressMeter
 from utils.model_utils import load_model_weights
 from utils.train_utils import add_metrics_meters
@@ -104,9 +104,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
         out_rel = rel.parent / "pred"
 
     if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_v3" / out_rel
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_no_mask" / out_rel
     else:
-        out_dir = Path(args.data_dir).parent / "0923_test_mse_weight_v2" / out_rel
+        out_dir = Path(args.data_dir).parent / "0923_test_refine_no_mask" / out_rel
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img_copy = input_rgb.copy()
@@ -158,37 +158,32 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
             data_time.update(time.time() - data_time_start)
             batch_time_start = time.time() 
             if torch.cuda.is_available():
-                input = [sample['input'][i].cuda(non_blocking=True)
-                     for i in range(len(sample['input']))]
-                mask = sample['mask'].type(torch.LongTensor).cuda(non_blocking=True)
-                if args.add_depth_inputs:
-                    input_depth = [sample['input_depth'][i].cuda(non_blocking=True) for i in range(len(sample['input_depth']))]
-            else: 
-                mask = sample['mask'].type(torch.LongTensor)
-            mask = mask.squeeze(1)
-            if args.add_optflow_inputs:
-                optflow = [] 
-                frame0 = F.interpolate(input[0], scale_factor=1.0, mode='nearest')
-                if args.optflow_model == 'FlowFormerPlusPlus':
-                    frame0 = frame0 * 0.225 / 0.5 # approximate scaling so as to match the input range of FlowFormerPlusPlus
-                for i in range(1,len(input)):
-                    frame = F.interpolate(input[i], scale_factor=1.0, mode='nearest')
-                    if args.optflow_model == 'FlowFormerPlusPlus':
-                        frame = frame * 0.225 / 0.5 # approximate scaling so as to match the input range of FlowFormerPlusPlus
-                    if 'Basic' in args.model_type:
-                        flow = optflow_model(frame, frame0)[-1]
-                    else:
-                        flow = optflow_model(frame0, frame)[-1]
-                    flow = F.interpolate(flow/1.0, size=(input[0].size(2), input[0].size(3)), mode='bilinear', align_corners=True)
-                    optflow.append(flow)
-                if args.add_depth_inputs: 
-                    output = model(input, optflow=optflow, depth=input_depth)
+                input = [sample['input'][i].float().cuda(non_blocking=True) for i in range(len(sample['input']))]
+                coarse = [sample['coarse'][i].float().cuda(non_blocking=True) for i in range(len(sample['coarse']))]
+                if args.use_mask:
+                    sam_masks = [sample['sam'][i].float().cuda(non_blocking=True)
+                                for i in range(len(sample['sam']))] \
+                                if 'sam' in sample and sample['sam'] is not None else None
                 else:
-                    output = model(input, optflow=optflow)
-            elif args.add_depth_inputs: 
-                output = model(input, depth=input_depth)
+                    sam_masks = None                 
+
+                if args.add_depth_inputs:
+                    input_depth = [sample['input_depth'][i].float().cuda(non_blocking=True) for i in range(len(sample['input_depth']))]
             else: 
-                output = model(input)
+                input = [sample['input'][i].float() for i in range(len(sample['input']))]
+                coarse = [sample['coarse'][i].float() for i in range(len(sample['coarse']))]
+                if args.use_mask:
+                    sam_masks = [sample['sam'][i].float()
+                                for i in range(len(sample['sam']))] \
+                                if 'sam' in sample and sample['sam'] is not None else None
+                else:
+                    sam_masks = None                 
+                if args.add_depth_inputs:
+                    input_depth = [sample['input_depth'][i].float() for i in range(len(sample['input_depth']))]
+            if args.add_depth_inputs:
+                output = model(input,depth=input_depth, coarse=coarse, sam_masks=sam_masks)
+            else:
+                output = model(input, coarse=coarse, sam_masks=sam_masks)
 
             # MSE HEATMAP DECODE:
             output_heatmaps = output.detach().cpu().numpy()  # [B, C, H, W]
@@ -196,9 +191,10 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
 
             end = min(step+B, len(file_names))
             results = heatmap_parser.parse(output.detach())
+            VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
+            VIS_IDX = max(0, min(VIS_IDX, len(input) - 1))            
             for b in range(B):
                 hm = output_heatmaps[b]  # [C, H, W]
-                VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
                 ori_img = postprocess_image(
                     input[VIS_IDX][b, :3, :, :].cpu().numpy()
                 )
@@ -214,7 +210,7 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                     / "pred_heatmaps"
                     / case_name
                 )
-                
+                '''
                 save_pred_heatmaps(
                     hm=hm,
                     ori_img=ori_img,
@@ -222,7 +218,7 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                     frame_name=frame_name,
                     class_names=("tip", "anchor")
                 )
-                
+                '''
                 if heatmap_parser is not None:
                     tip_pts    = results["tip"][b] if "tip" in results else []
                     anchor_pts = results["anchor"][b] if "anchor" in results else []  
@@ -246,9 +242,9 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         video_rel = rel_path_obj.parent
 
                     if args.dataset == 'ACT':
-                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse_v3"
+                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse_no_mask"
                     else:
-                        base_pred_root = Path(args.data_dir).parent / "0923_test_mse_weight_v2"
+                        base_pred_root = Path(args.data_dir).parent / "0923_test_refine_no_mask"
                     
                     json_dir = base_pred_root / video_rel
                     json_dir.mkdir(parents=True, exist_ok=True)
@@ -321,6 +317,8 @@ def main_worker(args):
         test_file_names, _ = get_ACT_dataset_filenames(args)
     elif args.dataset=='KPT':
         test_file_names, _ = get_KPT_dataset_filenames(args)
+    elif args.dataset == 'KPT_refine':
+        test_file_names, _ = get_KPT_refine_dataset_filenames(args)
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
     # print(test_file_names)
@@ -395,8 +393,8 @@ def main_worker(args):
              }
         else:
             CHANNEL_CONFIGS = {
-            0: {"name": "tip", "topk": 10, "max_keep": 2, "threshold": 0.4},
-            1: {"name": "anchor", "topk": 5, "max_keep": 1, "threshold":0.15},
+            0: {"name": "tip", "topk": 10, "max_keep": 2, "threshold": 0.3},
+            1: {"name": "anchor", "topk": 5, "max_keep": 1, "threshold":0.05},
             }
     heatmap_parser  = HeatmapParser(CHANNEL_CONFIGS, nms_kernel=3, nms_padding=1)
 

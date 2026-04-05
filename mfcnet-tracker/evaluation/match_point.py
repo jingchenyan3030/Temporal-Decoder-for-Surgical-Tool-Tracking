@@ -467,7 +467,7 @@ def test_single_case(
 if __name__ == "__main__":
     training_data_root = "/home/chenyan/fallout_data/data/0923_training_data"
     ori_data_root = "/home/chenyan/fallout_data/ori_data/surg_act_09232025"
-    pred_root_dir = "/home/chenyan/fallout_data/data/0923_test_multiframe_mid/grasp"
+    pred_root_dir = "/mnt/sda1/datasets/chenyan/fallout_data/data/0923_test_refine_no_mask/clip"
 
     case_list = [case for case in sorted(os.listdir(pred_root_dir))]
 
@@ -492,7 +492,7 @@ if __name__ == "__main__":
     print("\n=== GLOBAL summary (CANON ) ===")
     print(json.dumps(global_summary, indent=2))
 
-    save_json_path = "/home/chenyan/fallout_data/eval/grasp_base_mid.json"
+    save_json_path = "/home/chenyan/fallout_data/eval/refine_clip_no_mask.json"
     os.makedirs(os.path.dirname(save_json_path), exist_ok=True)
     with open(save_json_path, "w", encoding="utf-8") as f:
         json.dump(per_case_summaries, f, indent=2)

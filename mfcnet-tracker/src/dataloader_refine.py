@@ -21,125 +21,241 @@ class to_tensor(object):
         input = sample['input'] 
         mask = sample['mask'] 
         tensor_dict = {} 
+
         tensor_dict['input'] = []
-        tensor_dict['mask'] = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)
         for image in input: 
-            tensor_dict['input'].append(torch.from_numpy(image.transpose(2,0,1).astype(np.float32)/255.0))
+            tensor_dict['input'].append(
+                torch.from_numpy(image.transpose(2,0,1).astype(np.float32) / 255.0)
+            )
+
+        if mask.ndim == 2:
+            tensor_dict['mask'] = torch.from_numpy(mask.astype(np.float32)).unsqueeze(0)
+        else:
+            tensor_dict['mask'] = torch.from_numpy(mask.transpose(2,0,1).astype(np.float32))
+
+        if 'coarse' in sample and sample['coarse'] is not None:
+            tensor_dict['coarse'] = []
+            for coarse in sample['coarse']:
+                tensor_dict['coarse'].append(
+                    torch.from_numpy(coarse.transpose(2,0,1).astype(np.float32))
+                )
+
+        if 'sam' in sample and sample['sam'] is not None:
+            tensor_dict['sam'] = []
+            for sam in sample['sam']:
+                tensor_dict['sam'].append(
+                    torch.from_numpy(sam.transpose(2,0,1).astype(np.float32))
+                )
+
         if 'input_depth' in sample: 
             input_depth = sample['input_depth']
             tensor_dict['input_depth'] = []
             for depth in input_depth: 
-                tensor_dict['input_depth'].append(torch.from_numpy(depth.astype(np.float32)/255.0).unsqueeze(0))
+                if depth.ndim == 2:
+                    tensor_dict['input_depth'].append(
+                        torch.from_numpy(depth.astype(np.float32)).unsqueeze(0) / 255.0
+                    )
+                else:
+                    tensor_dict['input_depth'].append(
+                        torch.from_numpy(depth.transpose(2,0,1).astype(np.float32)) / 255.0
+                    )
+
         if 'points' in sample:
             tensor_dict['points'] = sample['points']
+
         if 'labels' in sample and sample['labels'] is not None:
             tensor_dict['labels'] = sample['labels']
+
         if 'visibility' in sample:
             tensor_dict['visibility'] = sample['visibility']
+
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             tensor_dict['sam_weight'] = torch.from_numpy(sample['sam_weight'].astype(np.float32))
+
         if 'valid' in sample:
             tensor_dict['valid'] = torch.as_tensor(sample['valid'], dtype=torch.bool)
+
         if 'heatmap_valid' in sample:
             tensor_dict['heatmap_valid'] = torch.from_numpy(sample['heatmap_valid'].astype(np.float32))
+
         return tensor_dict
     
 class customResize(object):
     def __init__(self, img_size):
-        if isinstance(img_size, int): 
+        if isinstance(img_size, int):
             self.img_size = (img_size, img_size)
         elif isinstance(img_size, tuple):
             assert len(img_size) == 2
             self.img_size = img_size
         else:
             raise TypeError
-    
-    def __call__(self, sample): 
-        input = sample['input'] 
-        mask = sample['mask'] 
 
-        H_old, W_old = mask.shape[-2], mask.shape[-1]
-        H_new, W_new = self.img_size
+    def __call__(self, sample):
+        resized_dict = {}
 
-        resized_dict = {} 
         resized_dict['input'] = []
-        resized_dict['mask'] = transforms.Resize(self.img_size, interpolation=tF.InterpolationMode.NEAREST)(mask)
-        for image in input: 
-            resized_dict['input'].append(transforms.Resize(self.img_size, interpolation=tF.InterpolationMode.BILINEAR)(image))
-        if 'input_depth' in sample:
-            input_depth = sample['input_depth']
-            resized_dict['input_depth'] = []
-            for depth in input_depth: 
-                resized_dict['input_depth'].append(transforms.Resize(self.img_size, interpolation=tF.InterpolationMode.NEAREST)(depth))
+        for image in sample['input']:
+            resized_dict['input'].append(
+                transforms.Resize(
+                    self.img_size,
+                    interpolation=tF.InterpolationMode.BILINEAR
+                )(image)
+            )
 
-        if 'points' in sample:
-            pts = sample['points'].clone() if torch.is_tensor(sample['points']) else torch.tensor(sample['points'])
-            sx = float(W_new) / float(W_old)
-            sy = float(H_new) / float(H_old)
-            pts[:, 0] = pts[:, 0] * sx
-            pts[:, 1] = pts[:, 1] * sy
-            pts[:,0] = pts[:,0] / float(W_new-1) if W_new > 1 else pts[:,0]
-            pts[:,1] = pts[:,1] / float(H_new-1) if H_new > 1 else pts[:,1]
-            resized_dict['points'] = pts
-            resized_dict['labels'] = sample['labels']
-            resized_dict['visibility'] = sample['visibility']
-            if 'valid' in sample:
-                resized_dict['valid'] = sample['valid']
+        resized_dict['mask'] = transforms.Resize(
+            self.img_size,
+            interpolation=tF.InterpolationMode.BILINEAR
+        )(sample['mask'])
+
+        if 'coarse' in sample and sample['coarse'] is not None:
+            resized_dict['coarse'] = []
+            for coarse in sample['coarse']:
+                resized_dict['coarse'].append(
+                    transforms.Resize(
+                        self.img_size,
+                        interpolation=tF.InterpolationMode.BILINEAR
+                    )(coarse)
+                )
+
+        if 'sam' in sample and sample['sam'] is not None:
+            resized_dict['sam'] = []
+            for sam in sample['sam']:
+                resized_dict['sam'].append(
+                    transforms.Resize(
+                        self.img_size,
+                        interpolation=tF.InterpolationMode.NEAREST
+                    )(sam)
+                )
+
+        if 'input_depth' in sample:
+            resized_dict['input_depth'] = []
+            for depth in sample['input_depth']:
+                resized_dict['input_depth'].append(
+                    transforms.Resize(
+                        self.img_size,
+                        interpolation=tF.InterpolationMode.NEAREST
+                    )(depth)
+                )
+
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             resized_dict['sam_weight'] = transforms.Resize(
-                self.img_size, interpolation=tF.InterpolationMode.NEAREST
+                self.img_size,
+                interpolation=tF.InterpolationMode.NEAREST
             )(sample['sam_weight'])
+
         if 'heatmap_valid' in sample:
             resized_dict['heatmap_valid'] = sample['heatmap_valid']
+
+        if 'points' in sample:
+            resized_dict['points'] = sample['points']
+        if 'labels' in sample and sample['labels'] is not None:
+            resized_dict['labels'] = sample['labels']
+        if 'visibility' in sample:
+            resized_dict['visibility'] = sample['visibility']
+        if 'valid' in sample:
+            resized_dict['valid'] = sample['valid']
+
         return resized_dict
 
-class customRandomRotate(object): 
-    def __call__(self, sample): 
-        angle = np.random.randint(-15, 15) #(-30, 30)
-        input = sample['input']
-        mask = sample['mask']
+class customRandomRotate(object):
+    def __init__(self, angle_range=(-15, 15)):
+        self.angle_range = angle_range
+
+    def __call__(self, sample):
+        angle = np.random.randint(self.angle_range[0], self.angle_range[1])
         rotated_dict = {}
+
         rotated_dict['input'] = []
-        rotated_dict['mask'] = tF.rotate(mask, angle)
-        for image in input:
-            rotated_dict['input'].append(tF.rotate(image, angle))
+        for image in sample['input']:
+            rotated_dict['input'].append(
+                tF.rotate(image, angle, interpolation=tF.InterpolationMode.BILINEAR)
+            )
+
+        rotated_dict['mask'] = tF.rotate(
+            sample['mask'], angle, interpolation=tF.InterpolationMode.BILINEAR
+        )
+
+        if 'coarse' in sample and sample['coarse'] is not None:
+            rotated_dict['coarse'] = []
+            for coarse in sample['coarse']:
+                rotated_dict['coarse'].append(
+                    tF.rotate(coarse, angle, interpolation=tF.InterpolationMode.BILINEAR)
+                )
+
+        if 'sam' in sample and sample['sam'] is not None:
+            rotated_dict['sam'] = []
+            for sam in sample['sam']:
+                rotated_dict['sam'].append(
+                    tF.rotate(sam, angle, interpolation=tF.InterpolationMode.NEAREST)
+                )
+
         if 'input_depth' in sample:
-            input_depth = sample['input_depth']
             rotated_dict['input_depth'] = []
-            for depth in input_depth:
-                rotated_dict['input_depth'].append(tF.rotate(depth, angle))
+            for depth in sample['input_depth']:
+                rotated_dict['input_depth'].append(
+                    tF.rotate(depth, angle, interpolation=tF.InterpolationMode.NEAREST)
+                )
 
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
-            rotated_dict['sam_weight'] = tF.rotate(sample['sam_weight'], angle, interpolation=tF.InterpolationMode.NEAREST)
+            rotated_dict['sam_weight'] = tF.rotate(
+                sample['sam_weight'], angle, interpolation=tF.InterpolationMode.NEAREST
+            )
+
         if 'heatmap_valid' in sample:
-            rotated_dict['heatmap_valid'] = sample['heatmap_valid']       
+            rotated_dict['heatmap_valid'] = sample['heatmap_valid']
+        if 'points' in sample:
+            rotated_dict['points'] = sample['points']
+        if 'labels' in sample and sample['labels'] is not None:
+            rotated_dict['labels'] = sample['labels']
+        if 'visibility' in sample:
+            rotated_dict['visibility'] = sample['visibility']
+        if 'valid' in sample:
+            rotated_dict['valid'] = sample['valid']
+
         return rotated_dict
 
-class customRandomHSVDistortion(object): 
-    def __init__(self, p=0.5): 
-        self.p = p 
-    
-    def __call__(self, sample): 
-        input = sample['input'] 
-        mask = sample['mask'] 
+class customRandomHSVDistortion(object):
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, sample):
         distorted_dict = {}
         distorted_dict['input'] = []
-        distorted_dict['mask'] = mask
-        if np.random.binomial(size=1, n=1, p=self.p): 
-            for image in input: 
-                image = tF.adjust_brightness(image, np.random.uniform(0.95,1.05))
-                image = tF.adjust_contrast(image, np.random.uniform(0.95,1.05))
-                image = tF.adjust_saturation(image, np.random.uniform(0.95,1.05))
+
+        if np.random.binomial(size=1, n=1, p=self.p):
+            b = np.random.uniform(0.95, 1.05)
+            c = np.random.uniform(0.95, 1.05)
+            s = np.random.uniform(0.95, 1.05)
+
+            for image in sample['input']:
+                image = tF.adjust_brightness(image, b)
+                image = tF.adjust_contrast(image, c)
+                image = tF.adjust_saturation(image, s)
                 distorted_dict['input'].append(image)
-        else: 
-            distorted_dict['input'] = input
-        if 'input_depth' in sample: 
-            input_depth = sample['input_depth']
-            distorted_dict['input_depth'] = input_depth 
+        else:
+            distorted_dict['input'] = sample['input']
+
+        distorted_dict['mask'] = sample['mask']
+
+        if 'input_depth' in sample:
+            distorted_dict['input_depth'] = sample['input_depth']
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             distorted_dict['sam_weight'] = sample['sam_weight']
         if 'heatmap_valid' in sample and sample['heatmap_valid'] is not None:
             distorted_dict['heatmap_valid'] = sample['heatmap_valid']
+        if 'coarse' in sample and sample['coarse'] is not None:
+            distorted_dict['coarse'] = sample['coarse']
+        if 'sam' in sample and sample['sam'] is not None:
+            distorted_dict['sam'] = sample['sam']
+        if 'points' in sample:
+            distorted_dict['points'] = sample['points']
+        if 'labels' in sample and sample['labels'] is not None:
+            distorted_dict['labels'] = sample['labels']
+        if 'visibility' in sample:
+            distorted_dict['visibility'] = sample['visibility']
+        if 'valid' in sample:
+            distorted_dict['valid'] = sample['valid']
+
         return distorted_dict
 
 class customHorizontalFlip(object): 
@@ -233,37 +349,51 @@ class customVerticalFlip(object):
         else:
             return sample
 
-class customNormalize(object): 
-    def __init__(self, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]): 
-        self.mean = mean 
-        self.std = std 
-    
-    def __call__(self, sample): 
-        input = sample['input'] 
-        mask = sample['mask'] 
-        normalized_dict = {} 
+class customNormalize(object):
+    def __init__(self, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+        self.mean = mean
+        self.std = std
+        self.normalize = transforms.Normalize(mean=self.mean, std=self.std)
+
+    def __call__(self, sample):
+        images = sample['input']
+        mask = sample['mask']
+
+        normalized_dict = {}
         normalized_dict['input'] = []
+
+        for image in images:
+            normalized_dict['input'].append(self.normalize(image))
+
         normalized_dict['mask'] = mask
-        for image in input: 
-            image = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(image)
-            normalized_dict['input'].append(image)
+
         if 'input_depth' in sample:
-            input_depth = sample['input_depth']
-            normalized_dict['input_depth'] = []
-            for depth in input_depth: 
-                normalized_dict['input_depth'].append(depth)
-        if 'points' in sample:
-            normalized_dict['points'] = sample['points']
-        if 'labels' in sample:
-            normalized_dict['labels'] = sample['labels']
-        if 'visibility' in sample:
-            normalized_dict['visibility'] = sample['visibility']
+            normalized_dict['input_depth'] = sample['input_depth']
+
         if 'sam_weight' in sample and sample['sam_weight'] is not None:
             normalized_dict['sam_weight'] = sample['sam_weight']
-        if 'valid' in sample:
-            normalized_dict['valid'] = sample['valid']
+
         if 'heatmap_valid' in sample:
             normalized_dict['heatmap_valid'] = sample['heatmap_valid']
+
+        if 'sam' in sample and sample['sam'] is not None:
+            normalized_dict['sam'] = sample['sam']
+
+        if 'coarse' in sample and sample['coarse'] is not None:
+            normalized_dict['coarse'] = sample['coarse']
+
+        if 'points' in sample:
+            normalized_dict['points'] = sample['points']
+
+        if 'labels' in sample and sample['labels'] is not None:
+            normalized_dict['labels'] = sample['labels']
+
+        if 'visibility' in sample:
+            normalized_dict['visibility'] = sample['visibility']
+
+        if 'valid' in sample:
+            normalized_dict['valid'] = sample['valid']
+
         return normalized_dict
 
 # New Adding for DETR:
@@ -400,6 +530,7 @@ def get_data_loader(args):
                 val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False,
                         sampler=val_sampler, num_workers=args.num_workers, pin_memory=True)
                 return train_loader, val_loader
+            
             elif args.mode == 'generate_coarse':
                 test_file_names = get_all_image_files(args)
                 test_transform = get_act_transform('test', args)
@@ -411,7 +542,6 @@ def get_data_loader(args):
                 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
                                         num_workers=args.num_workers, pin_memory=True)
                 return None, test_loader                
-
             else: 
                 test_file_names, _ = get_KPT_dataset_filenames(args)
                 if args.prediction_task == 'detr_keypoint':
@@ -426,7 +556,6 @@ def get_data_loader(args):
                 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, 
                                         num_workers=args.num_workers, pin_memory=True)
                 return None, test_loader
-            
         else:
             if args.mode == 'training': 
                 train_file_names, val_file_names = get_KPT_dataset_filenames(args)
@@ -564,8 +693,7 @@ if __name__=="__main__":
         num_frames_per_video=225,
         batch_size=16,
         num_workers=8,
-        add_depth_inputs=True,  
-        use_mask=True
+        add_depth_inputs=True
         )
 
     train_loader, val_loader = get_data_loader(args)

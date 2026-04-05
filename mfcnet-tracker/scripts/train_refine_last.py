@@ -11,10 +11,7 @@ sys.path.append('.')
 sys.path.append('./models/')
 import logging, json, configargparse
 from pathlib import Path
-# segmemtation model config parser
-#from configs.config_multiframe import train_config_parser as config_parser
-# mse model config parser
-from configs.config_multiframe import train_config_parser as config_parser
+from configs.config_refine_final import train_config_parser as config_parser
 import tqdm, time, math, random
 import cv2 
 import numpy as np
@@ -30,8 +27,8 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms
 
 import matplotlib.pyplot as plt
-from src.dataloader_multiframe import get_data_loader
-from src.engine import train_one_epoch, validate
+from src.dataloader_refine import get_data_loader
+from src.engine_refine import train_one_epoch, validate
 from models import get_multiframe_segmentation_model as get_model
 from utils.log_utils import AverageMeter, ProgressMeter, init_logging
 from utils.model_utils import load_model_weights, save_model
@@ -129,9 +126,11 @@ def main_worker(args):
     # set up model 
     model = get_model(args)
 
-    if args.load_wts_base_model is not None:
+    is_refine_model = (args.model_type == 'SingleFrameRefineTernaus')
+
+    if (not is_refine_model) and (args.load_wts_base_model is not None):
         basemodel_state = torch.load(args.load_wts_base_model, map_location='cpu')
-        if args.prediction_task == 'keypoint_heatmap' :
+        if args.prediction_task == 'keypoint_heatmap':
             model.base_model.load_state_dict(basemodel_state['model'], strict=False)
             logger.info("[heatmap] base_model loaded strict=False (skip mismatched layers/head)")
         else:
@@ -149,7 +148,10 @@ def main_worker(args):
 
 
     # set up optimizer and scheduler
-    if args.train_base_model:
+    if is_refine_model:
+        logger.info("Training refine model")
+        optimizer = optim.Adam(model.module.parameters(), lr=args.lr)
+    elif args.train_base_model:
         logger.info("Training base model and multi-frame network")
         if args.load_wts_base_model is not None:
             optimizer = optim.Adam([{'params': model.module.base_model.parameters(), 'lr': args.lr/(100*args.num_input_frames)}, 
@@ -182,12 +184,7 @@ def main_worker(args):
         if hasattr(val_dataloader, "sampler") and hasattr(val_dataloader.sampler, "set_epoch"):
             val_dataloader.sampler.set_epoch(epoch)  
 
-        if args.train_base_model:
-            model.train()
-        else:
-            model.module.base_model.eval()
-            model.module.multiframe_net.train()
-
+        model.train()
         try:
             # ---- Train ----
             if args.global_rank == 0:

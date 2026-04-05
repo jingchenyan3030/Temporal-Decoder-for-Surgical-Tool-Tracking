@@ -23,7 +23,7 @@ def train_config_parser(parser):
     # I/O related arguments
     parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
                         help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
-    parser.add_argument('--expt_name', type=str, default='multiframe_clip_drop',
+    parser.add_argument('--expt_name', type=str, default='multiframe_clip_drop_1',
                         help='Experiment name. Default: multiframe_clip_mse_sam_drop')
     parser.add_argument('--print_freq', type=int, default=1, 
                         help='Print frequency. Default: 1')
@@ -99,7 +99,7 @@ def test_config_parser(parser):
     # dataset related arguments
     parser.add_argument('--action', type=str, default='clip', choices=['grasp', 'clip','dissect', 'cut'], 
                         help='Mode of operation. Default: clip')
-    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action', 
+    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action_2', 
                         help='Path to data directory. Default: /home/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT', 'ACT'], # should change but not change
                         help='Dataset name. Default: KPT')
@@ -138,7 +138,7 @@ def test_config_parser(parser):
                         help='Use pre-trained weights. Default: False')
     parser.add_argument('--load_wts_base_model', type=str, default= None, 
                         help='Path to base model weights from a pretrained per-frame model. Default: None')
-    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_mse_sam_v2_full/ckpts/model_010.pth', 
+    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_drop_full/ckpts/model_010.pth', 
                         help='Path to model weights. Default: None')
     parser.add_argument('--input_height', type=int, default=256, help='NN input image height')
     parser.add_argument('--input_width', type=int, default=320, help='NN input image width')

@@ -11,10 +11,7 @@ sys.path.append('.')
 sys.path.append('./models/')
 import logging, json, configargparse
 from pathlib import Path
-# segmemtation model config parser
-#from configs.config_multiframe import train_config_parser as config_parser
-# mse model config parser
-from configs.config_multiframe import train_config_parser as config_parser
+from configs.config_refine_final import train_config_parser as config_parser
 import tqdm, time, math, random
 import cv2 
 import numpy as np
@@ -30,8 +27,8 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms
 
 import matplotlib.pyplot as plt
-from src.dataloader_multiframe import get_data_loader
-from src.engine import train_one_epoch, validate
+from src.dataloader_refine import get_data_loader
+from src.engine_multiframe import train_one_epoch, validate
 from models import get_multiframe_segmentation_model as get_model
 from utils.log_utils import AverageMeter, ProgressMeter, init_logging
 from utils.model_utils import load_model_weights, save_model

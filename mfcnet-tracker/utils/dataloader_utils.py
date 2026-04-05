@@ -386,6 +386,7 @@ def get_KPT_refine_dataset_filenames(args):
                     heatmap_coarse_dir  = video_dir / "heatmap_coarse"
                     mask_coarse_dir = video_dir / "mask_coarse"
                     gt_heatmap_dir =  video_dir / "sam_results"
+                    detr_dir = video_dir / 'points_detr'
 
                     if not img_dir.exists() or not heatmap_coarse_dir.exists() or not mask_coarse_dir.exists() or not gt_heatmap_dir.exists():
                         continue
@@ -423,6 +424,55 @@ def get_KPT_refine_dataset_filenames(args):
         return all_files, None
     else:
         raise ValueError(f"Unknown mode: {args.mode}")
+
+
+def get_all_image_files(args):
+    root = Path(args.data_dir)
+    actions = ['grasp', 'clip', 'cut', 'dissect']
+    if hasattr(args, "action") and args.action in actions:
+        actions = [args.action]
+    elif hasattr(args, "action") and args.action not in actions and args.action is not None:
+        print(f"[Warning] Unknown action '{args.action}', proceeding with all actions.")
+
+    def collect(cases):
+        files = []
+        for case in cases:
+            for video_dir in natsorted(case.iterdir(), key=str):
+                if not video_dir.is_dir():
+                    continue
+                img_dir = video_dir / "images"
+                gt_heatmap_dir = video_dir / "sam_results"
+                if not img_dir.exists() or not gt_heatmap_dir.exists():
+                    continue
+                images = natsorted(
+                    [p for p in img_dir.glob("*") if p.suffix.lower() in [".png", ".jpg", ".jpeg"]],
+                    key=str
+                )
+                gt_heatmap = natsorted(
+                    [p for p in gt_heatmap_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")],
+                    key=str
+                )
+                if len(images) != len(gt_heatmap):
+                    print(
+                        f"[DROP VIDEO] {video_dir} "
+                        f"images={len(images)} gt={len(gt_heatmap)}"
+                    )
+                    continue
+                files.extend(images)
+        return files
+
+    all_files = []
+    for action in actions:
+        action_dir = root / action
+        if not action_dir.exists():
+            raise ValueError(f"Action directory '{action}' does not exist in the dataset root.")
+        all_cases = natsorted(
+            [d for d in action_dir.iterdir() if d.is_dir()],
+            key=str
+        )
+        all_files.extend(collect(all_cases))
+    return all_files
+
 
 ## new adding end
 def get_ACT_dataset_filenames(args):

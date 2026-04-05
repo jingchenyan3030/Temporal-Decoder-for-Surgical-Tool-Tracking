@@ -8,6 +8,10 @@ from torchvision.models.segmentation.fcn import FCNHead
 from torchvision import models
 from .ternausnet import TernausNet11, TernausNet16
 from .tap_model import TAPNet11, TAPNet16
+# refine model
+from .refinement_model import SingleFrameRefineTernaus
+
+
 '''
 # segmentation multi-frame models
 from .multiframe_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
@@ -15,7 +19,7 @@ from .multiframe_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLa
 '''
 
 # mse multi-frame models
-from .multiframe_mse_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
+from .multiframe_model_refine import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
 
 
@@ -108,6 +112,8 @@ def get_multiframe_segmentation_model(args):
     elif args.model_type == 'TernusNetMultiDETRBasic':
         model = TernusNetMultiDETRBasic(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,
                                optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)
+    elif args.model_type == 'SingleFrameRefineTernaus':
+        model = SingleFrameRefineTernaus(use_mask=args.use_mask,pretrained=args.pretrained)
     else:
         raise ValueError(f"Model type {args.model_type} not recognized")
     return model

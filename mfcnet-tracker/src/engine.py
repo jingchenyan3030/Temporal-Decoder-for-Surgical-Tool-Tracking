@@ -52,6 +52,10 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
                 sam_weight = sample.get('sam_weight', None)
                 if sam_weight is not None:
                     sam_weight = sam_weight.float().cuda(non_blocking=True)
+                    
+                heatmap_valid = sample.get('heatmap_valid', None)
+                if heatmap_valid is not None:
+                    heatmap_valid = heatmap_valid.float().cuda(non_blocking=True)
             elif args.prediction_task == 'detr_keypoint':
                 targets = []
                 B = len(sample["points"])
@@ -163,7 +167,7 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
         # Baseed on the task, compute loss
         if args.prediction_task == 'keypoint_heatmap' and 'mse' in args.loss_fns:
             # For keypoint heatmap prediction with MSE loss, do not apply log_softmax
-            loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, sam_weight=sam_weight)
+            loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, heatmap_valid=heatmap_valid)
         elif args.prediction_task == 'detr_keypoint':
             outputs = output
             matcher = HungarianMatcher()
@@ -177,7 +181,7 @@ def train_one_epoch(dataloader, epoch, model, optimizer, args, logger, writer=No
             '''
         else:
             output = F.log_softmax(output, dim=1)
-            loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args)
+            loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, heatmap_valid=heatmap_valid)
         if math.isnan(loss.item()) or math.isinf(loss.item()): 
             logger.debug(f"Loss is {loss.item()}. Exiting...")
             import pdb; pdb.set_trace()
@@ -243,6 +247,9 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
                     sam_weight = sample.get('sam_weight', None)
                     if sam_weight is not None:
                         sam_weight = sam_weight.float().cuda(non_blocking=True)
+                    heatmap_valid = sample.get('heatmap_valid', None)
+                    if heatmap_valid is not None:
+                        heatmap_valid = heatmap_valid.float().cuda(non_blocking=True)
                 elif args.prediction_task == 'detr_keypoint':
                     targets = []
                     B = len(sample["points"])
@@ -318,7 +325,7 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
             # Based on the task, compute loss
             if args.prediction_task == 'keypoint_heatmap' and 'mse' in args.loss_fns:
                 # For keypoint heatmap prediction with MSE loss
-                loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, sam_weight=sam_weight)
+                loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, heatmap_valid=heatmap_valid)
 
             elif args.prediction_task == 'detr_keypoint':
                 outputs = output
@@ -333,7 +340,7 @@ def validate(dataloader, model, args, logger, writer=None, epoch=None, optflow_m
                 '''
             else:
                 output = F.log_softmax(output, dim=1)
-                loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args)
+                loss, loss_dict = get_loss(output, mask, args.loss_fns, args.loss_wts, args, heatmap_valid=heatmap_valid)
                 metrics, metric_dict = get_metrics(output, mask, args.metric_fns, args)
             if math.isnan(loss.item()) or math.isinf(loss.item()):
                 logger.debug(f"Loss is NaN/Inf."); import pdb; pdb.set_trace()
