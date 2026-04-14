@@ -1,3 +1,4 @@
+# refine_model + prior
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,12 +13,14 @@ import torch
 import torch.nn as nn
 
 class MultiFrameNetBase(nn.Module):
-    def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
+    def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False, with_coarse = False, with_sam_mask=False):
         super(MultiFrameNetBase, self).__init__()
         self.num_classes = num_classes
         self.num_frames = num_frames
         self.with_optflow = with_optflow
         self.with_depth = with_depth
+        self.with_coarse = with_coarse
+        self.with_sam_mask = with_sam_mask
 
         # self.in_channels = self.num_frames * self.num_classes
         if has_base_perframe_model_trained:
@@ -29,6 +32,12 @@ class MultiFrameNetBase(nn.Module):
             self.in_channels += 2 * (self.num_frames - 1)
 
         if self.with_depth:
+            self.in_channels += 1 * self.num_frames
+
+        if self.with_coarse:
+            self.in_channels += self.num_classes * self.num_frames
+        
+        if self.with_sam_mask:
             self.in_channels += 1 * self.num_frames
 
     def forward(self, x):
@@ -49,16 +58,21 @@ class MultiFrameNetBase(nn.Module):
 #         return self.multiframe_net(x)
 
 class MultiFrameNetBasic(MultiFrameNetBase):
-    def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
-        super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
+    def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False, with_coarse=False, with_sam_mask=False):
+        super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth, with_coarse, with_sam_mask)
         self.in_channels = num_classes * num_frames
         if with_depth:
             self.in_channels += num_frames
-        self.in_channels += 1
+        if with_coarse:
+            self.in_channels += num_classes * num_frames
+        if with_sam_mask:
+            self.in_channels += num_frames
         self.num_classes = num_classes
         self.num_frames = num_frames
         self.with_optflow = with_optflow
         self.with_depth = with_depth
+        self.with_coarse = with_coarse
+        self.with_sam_mask = with_sam_mask
         
         self.multiframe_net = nn.Sequential(
             nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
@@ -206,13 +220,15 @@ class MultiFrameNetLarge(MultiFrameNetBase):
         return self.multiframe_net(x)
 
 class TernausNetMultiBasic(nn.Module):
-    def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False): 
+    def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False, with_coarse=False, with_sam_mask=False): 
         super(TernausNetMultiBasic, self).__init__()
         self.num_classes = num_classes
         self.num_frames = num_frames
         self.pretrained = pretrained
         self.optflow_inputs = optflow_inputs
         self.depth_inputs = depth_inputs
+        self.with_coarse = with_coarse
+        self.with_sam_mask = with_sam_mask
         if loadpath is not None:
             self.base_model = TernausNet16(num_classes=self.num_classes, num_filters=64, pretrained=self.pretrained)
             has_base_preframe_model_trained = True
@@ -220,9 +236,9 @@ class TernausNetMultiBasic(nn.Module):
             self.base_model = TernausNet16(num_classes=1*self.num_classes, num_filters=64, pretrained=self.pretrained)
             has_base_preframe_model_trained = False
         self.multiframe_net = MultiFrameNetBasic(self.num_classes, self.num_frames, has_base_preframe_model_trained,
-                                            with_optflow=self.optflow_inputs, with_depth=self.depth_inputs)
+                                            with_optflow=self.optflow_inputs, with_depth=self.depth_inputs, with_coarse=self.with_coarse, with_sam_mask=self.with_sam_mask)
     
-    def forward(self, x, anchor_map,optflow=None, depth=None):
+    def forward(self, x, optflow=None, depth=None,coarse=None, sam_masks=None):
         y_output = []
         for x_img in x: 
             y_img = self.base_model(x_img)
@@ -233,24 +249,20 @@ class TernausNetMultiBasic(nn.Module):
         if depth is not None:
             for depth_img in depth: 
                 y_output.append(depth_img)          # Add N_f depth images
-        
+        if self.with_coarse:
+            for coarse_img in coarse: 
+                y_output.append(coarse_img)         # Add N_f coarse segmentation maps
+        if self.with_sam_mask:
+            for sam_mask in sam_masks: 
+                y_output.append(sam_mask)           # Add N_f SAM masks
+
         y_output = torch.cat(y_output, dim=1)       # B x H x W
-        if anchor_map.shape[-2:] != y_output.shape[-2:]:
-            anchor_map = F.interpolate(
-                anchor_map,
-                size=y_output.shape[-2:],
-                mode='bilinear',
-                align_corners=False
-            )
-        if anchor_map.dim() == 3:
-                anchor_map = anchor_map.unsqueeze(1)
-        y_output = torch.cat([y_output, anchor_map], dim=1)
         y_output = self.multiframe_net(y_output)    # B x N_c x H x W
         y_output = torch.sigmoid(y_output)
         return y_output
 
 class TernausNetMultiLarge(nn.Module):
-    def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False):
+    def __init__(self, num_classes, num_frames, pretrained=True, loadpath=None, optflow_inputs=False, depth_inputs=False, with_coarse=False, with_sam_mask=False):
         super(TernausNetMultiLarge, self).__init__()
         self.num_classes = num_classes
         self.num_frames = num_frames

@@ -124,7 +124,7 @@ def load_kpt_mapping(csv_path):
 
             video_path = video_path.replace(
                 "/data/home/hao/chenyan/data/training_data/",
-                "/home/chenyan/fallout_data/data/0923_by_action/grasp/"
+                 "/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action/grasp/"
             )
 
             entries.append({
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     parser.add_argument("--sigma", type=float, default=10)
     args = parser.parse_args()
 
-    base_train = "/home/chenyan/fallout_data/data/0923_by_action"
+    base_train = "/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action"
     base_json = "/home/chenyan/fallout_data/ori_data/surg_act_09232025"
     csv_root = "/home/chenyan/fallout_data/data/0923_training_data"
 
@@ -252,7 +252,7 @@ if __name__ == "__main__":
                     f for f in os.listdir(save_dir)
                     if f.startswith("frame_") and f.endswith(".npy")
                 ])
-                if len(npy_files) == len(image_files):
+                if len(npy_files) == 3 *len(image_files):
                     print(f"[SKIP] {case_name}/{video_name}: npy count matches images.")
                     continue
                 print(f"[REGEN] {case_name}/{video_name}: removing incomplete save_dir.")

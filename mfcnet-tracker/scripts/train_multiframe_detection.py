@@ -14,7 +14,7 @@ from pathlib import Path
 # segmemtation model config parser
 #from configs.config_multiframe import train_config_parser as config_parser
 # mse model config parser
-from configs.config_multiframe import train_config_parser as config_parser
+from configs.config_mse import train_config_parser as config_parser
 import tqdm, time, math, random
 import cv2 
 import numpy as np

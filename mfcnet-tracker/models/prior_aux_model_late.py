@@ -1,4 +1,4 @@
-# train_model_aux_mid + piror
+# prior_aux_model: train_model_aux_late + prior
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -43,6 +43,19 @@ class MultiFrameNetBase(nn.Module):
     def forward(self, x):
         raise NotImplementedError("This is a base class. Use MultiFrameNetBasic or MultiFrameNetLarge.")
 
+# class MultiFrameNetBasic(MultiFrameNetBase):
+#     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False):
+#         super(MultiFrameNetBasic, self).__init__(num_classes, num_frames, has_base_perframe_model_trained, with_optflow, with_depth)
+
+#         self.multiframe_net = nn.Sequential(
+#             nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
+#             nn.BatchNorm2d(self.num_frames * self.num_classes), 
+#             nn.ReLU(),
+#             nn.Conv2d(self.num_frames * self.num_classes, self.num_classes, kernel_size=1, stride=1, padding=0, bias=False),
+#         )
+
+#     def forward(self, x):
+#         return self.multiframe_net(x)
 
 class MultiFrameNetBasic(MultiFrameNetBase):
     def __init__(self, num_classes, num_frames, has_base_perframe_model_trained=False, with_optflow=False, with_depth=False, with_coarse=False, with_sam_mask=False, with_aux_mask_head=False):
@@ -62,23 +75,15 @@ class MultiFrameNetBasic(MultiFrameNetBase):
         self.with_sam_mask = with_sam_mask
         self.with_aux_mask_head = with_aux_mask_head
 
-        feat_channels = self.num_frames * self.num_classes
-
-        self.block1 = nn.Sequential(
-            nn.Conv2d(self.in_channels, feat_channels, kernel_size=11, stride=1, padding=5, bias=False),
-            nn.BatchNorm2d(feat_channels),
+        self.multiframe_net = nn.Sequential(
+            nn.Conv2d(self.in_channels, self.num_frames * self.num_classes, kernel_size=11, stride=1, padding=5, bias=False),
+            nn.BatchNorm2d(self.num_frames * self.num_classes), 
             nn.ReLU(),
-        )
-
-        self.block2 = nn.Sequential(
-            nn.Conv2d(feat_channels, feat_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(feat_channels),
+            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(self.num_frames * self.num_classes),
             nn.ReLU(),
-        )
-
-        self.block3 = nn.Sequential(
-            nn.Conv2d(feat_channels, feat_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(feat_channels),
+            nn.Conv2d(self.num_frames * self.num_classes, self.num_frames * self.num_classes, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(self.num_frames * self.num_classes),
             nn.ReLU(),
         )
 
@@ -91,14 +96,11 @@ class MultiFrameNetBasic(MultiFrameNetBase):
     def forward(self, x):
         if self.with_optflow:
             x = self.warp_segmentation_and_depth(x)
-        feat1 = self.block1(x)
-        feat2 = self.block2(feat1)
-        feat3 = self.block3(feat2)
-
-        heatmap_logits = self.heatmap_head(feat3)
+        feat = self.multiframe_net(x)
+        heatmap_logits = self.heatmap_head(feat)
 
         if self.with_aux_mask_head:
-            aux_mask_logits = self.aux_mask_head(feat2)  
+            aux_mask_logits = self.aux_mask_head(feat)
             return {
                 'heatmap': heatmap_logits,
                 'aux_mask': aux_mask_logits

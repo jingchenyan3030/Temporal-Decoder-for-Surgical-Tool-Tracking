@@ -104,9 +104,9 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
         out_rel = rel.parent / "pred"
 
     if args.dataset == 'ACT':
-        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_no_mask" / out_rel
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_aux_mask" / out_rel
     else:
-        out_dir = Path(args.data_dir).parent / "0923_test_refine_no_mask" / out_rel
+        out_dir = Path(args.data_dir).parent / "0923_test_refine_aux_mask_mid_0.01" / out_rel
     out_dir.mkdir(parents=True, exist_ok=True)
 
     img_copy = input_rgb.copy()
@@ -126,7 +126,59 @@ def save_points_prediction(args, img_path, keypoints_dict, input_rgb):
   
     cv2.imwrite(str(out_file), cv2.cvtColor(img_copy, cv2.COLOR_RGB2BGR))
   
+def save_heatmap_prediction(args, img_path, hm, ori_img):
+    p = Path(img_path)
+    rel = p.relative_to(args.data_dir)
 
+    parts = list(rel.parts)
+    if "images" in parts:
+        idx = parts.index("images")
+        out_rel = Path(*parts[:idx]) / "pred_heatmaps"
+    else:
+        out_rel = rel.parent / "pred_heatmaps"
+
+    if args.dataset == 'ACT':
+        out_dir = Path(args.data_dir).parent / "act_test_multiframe_mse_aux_mask" / out_rel
+    else:
+        out_dir = Path(args.data_dir).parent / "0923_test_refine_final_heatmap" / out_rel
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    H, W = hm.shape[1], hm.shape[2]
+
+    # combined heatmap in BGR space for OpenCV
+    combined = np.zeros((H, W, 3), dtype=np.uint8)
+
+    # tip -> red
+    if hm.shape[0] > 0:
+        tip_map = hm[0]
+        tip_norm = (tip_map - tip_map.min()) / (tip_map.max() - tip_map.min() + 1e-6)
+        combined[:, :, 2] = (tip_norm * 255).astype(np.uint8)   # R channel in BGR
+
+    # anchor -> green
+    if hm.shape[0] > 1:
+        anchor_map = hm[1]
+        anchor_norm = (anchor_map - anchor_map.min()) / (anchor_map.max() - anchor_map.min() + 1e-6)
+        combined[:, :, 1] = (anchor_norm * 255).astype(np.uint8)  # G channel in BGR
+
+    # optional: pure combined heatmap
+    cv2.imwrite(
+        str(out_dir / f"{p.stem}_heatmap_combined.png"),
+        combined
+    )
+
+    # ori_img from postprocess_image() is RGB, convert to BGR first
+    ori_img_bgr = cv2.cvtColor(ori_img, cv2.COLOR_RGB2BGR)
+
+    # overlay combined heatmap onto original image
+    overlay = cv2.addWeighted(ori_img_bgr, 0.7, combined, 0.3, 0)
+
+    cv2.imwrite(
+        str(out_dir / f"{p.stem}_overlay_combined.png"),
+        overlay
+    )
+
+    print(f"HEATMAP OUTPUT → {out_dir / f'{p.stem}_overlay_combined.png'}")
 
 def main(): 
     parser = configargparse.ArgumentParser() 
@@ -158,39 +210,72 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
             data_time.update(time.time() - data_time_start)
             batch_time_start = time.time() 
             if torch.cuda.is_available():
-                input = [sample['input'][i].float().cuda(non_blocking=True) for i in range(len(sample['input']))]
-                coarse = [sample['coarse'][i].float().cuda(non_blocking=True) for i in range(len(sample['coarse']))]
-                if args.use_mask:
-                    sam_masks = [sample['sam'][i].float().cuda(non_blocking=True)
-                                for i in range(len(sample['sam']))] \
-                                if 'sam' in sample and sample['sam'] is not None else None
-                else:
-                    sam_masks = None                 
+                input = [sample['input'][i].float().cuda(non_blocking=True)
+                        for i in range(len(sample['input']))]
+                coarse = [sample['coarse'][i].float().cuda(non_blocking=True)
+                        for i in range(len(sample['coarse']))]
+
+                sam = sample.get('sam', None)
+                sam_input = None
+                aux_mask_target = None
+
+                if sam is not None:
+                    sam = [sam[i].float().cuda(non_blocking=True) for i in range(len(sam))]
+
+                    target_frame_idx = args.target_pos_from_start - 1
+                    aux_mask_target = sam[target_frame_idx]  
+
+                    sam_input = [x.clone() for x in sam]
+
+                    if not args.use_mask:
+                        sam_input = [torch.zeros_like(x) for x in sam_input]
 
                 if args.add_depth_inputs:
-                    input_depth = [sample['input_depth'][i].float().cuda(non_blocking=True) for i in range(len(sample['input_depth']))]
-            else: 
+                    input_depth = [sample['input_depth'][i].float().cuda(non_blocking=True)
+                                for i in range(len(sample['input_depth']))]
+            else:
                 input = [sample['input'][i].float() for i in range(len(sample['input']))]
                 coarse = [sample['coarse'][i].float() for i in range(len(sample['coarse']))]
-                if args.use_mask:
-                    sam_masks = [sample['sam'][i].float()
-                                for i in range(len(sample['sam']))] \
-                                if 'sam' in sample and sample['sam'] is not None else None
-                else:
-                    sam_masks = None                 
+
+                sam = sample.get('sam', None)
+                sam_input = None
+                aux_mask_target = None
+
+                if sam is not None:
+                    sam = [sam[i].float() for i in range(len(sam))]
+
+                    target_frame_idx = args.target_pos_from_start - 1
+                    aux_mask_target = sam[target_frame_idx]
+
+                    sam_input = [x.clone() for x in sam]
+
+                    if not args.use_mask:
+                        sam_input = [torch.zeros_like(x) for x in sam_input]
+
                 if args.add_depth_inputs:
-                    input_depth = [sample['input_depth'][i].float() for i in range(len(sample['input_depth']))]
+                    input_depth = [sample['input_depth'][i].float()
+                                for i in range(len(sample['input_depth']))]
+
             if args.add_depth_inputs:
-                output = model(input,depth=input_depth, coarse=coarse, sam_masks=sam_masks)
+                output = model(input, depth=input_depth,
+                   coarse=coarse, sam_masks=sam_input)
+
             else:
-                output = model(input, coarse=coarse, sam_masks=sam_masks)
+                output = model(input, coarse=coarse, sam_masks=sam_input)
+
+            if isinstance(output, dict):
+                heatmap_outputs = output["heatmap"]
+                aux_mask_outputs = output.get("aux_mask", None)
+            else:
+                heatmap_outputs = output
+                aux_mask_outputs = None
 
             # MSE HEATMAP DECODE:
-            output_heatmaps = output.detach().cpu().numpy()  # [B, C, H, W]
+            output_heatmaps = heatmap_outputs.detach().cpu().numpy()  # [B, C, H, W]
             B, C, H, W = output_heatmaps.shape
 
             end = min(step+B, len(file_names))
-            results = heatmap_parser.parse(output.detach())
+            results = heatmap_parser.parse(heatmap_outputs.detach())
             VIS_IDX = int(getattr(args, "target_pos_from_start", 4)) - 1
             VIS_IDX = max(0, min(VIS_IDX, len(input) - 1))            
             for b in range(B):
@@ -202,23 +287,12 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                 rel_img_path = os.path.relpath(img_path, str(args.data_dir))
                 frame_name = img_path.stem   
                 # ===== save heatmaps only =====
-                base_vis_dir = Path(args.data_dir).parent / "testing_multiframe_mse_mid_v2" / "pred_heatmaps"
-                case_name = img_path.parents[1].name
-                heatmap_save_dir = (
-                    Path(args.data_dir).parent.parent
-                    / "testing_multiframe_mse_mid_v2"
-                    / "pred_heatmaps"
-                    / case_name
-                )
-                '''
-                save_pred_heatmaps(
+                save_heatmap_prediction(
+                    args=args,
+                    img_path=img_path,
                     hm=hm,
-                    ori_img=ori_img,
-                    save_dir=heatmap_save_dir,
-                    frame_name=frame_name,
-                    class_names=("tip", "anchor")
+                    ori_img=ori_img
                 )
-                '''
                 if heatmap_parser is not None:
                     tip_pts    = results["tip"][b] if "tip" in results else []
                     anchor_pts = results["anchor"][b] if "anchor" in results else []  
@@ -242,9 +316,9 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         video_rel = rel_path_obj.parent
 
                     if args.dataset == 'ACT':
-                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_mse_no_mask"
+                        base_pred_root = Path(args.data_dir).parent / "act_test_multiframe_aux_mask"
                     else:
-                        base_pred_root = Path(args.data_dir).parent / "0923_test_refine_no_mask"
+                        base_pred_root = Path(args.data_dir).parent / "0923_test_refine_aux_mask_mid"
                     
                     json_dir = base_pred_root / video_rel
                     json_dir.mkdir(parents=True, exist_ok=True)
@@ -262,6 +336,7 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         "tip": tip_list,
                         "anchor": anchor_list
                     }
+                    '''
                     with open(json_path, 'w') as f:
                         json.dump(video_pred, f, indent=2)
 
@@ -275,7 +350,7 @@ def test(dataloader, model, args, file_names, logger, heatmap_parser , writer=No
                         keypoints_dict,
                         ori_img
                     )  
-
+                   '''    
             step = end
         
     return 

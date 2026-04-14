@@ -1,19 +1,21 @@
-import torch 
-import torch.nn as nn 
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np 
+import numpy as np
 
 def get_loss(outputs, targets, loss_fns, loss_wts, args,
              sam_weight=None, heatmap_valid=None,
-             aux_mask_target=None, aux_mask_weight=0.05):
-    loss_dict = {} 
+             aux_mask_target=None, aux_mask_weight=0.01):
+    loss_dict = {}
     total_loss = 0.0
+
     if isinstance(outputs, dict):
         heatmap_outputs = outputs['heatmap']
         aux_mask_outputs = outputs.get('aux_mask', None)
     else:
         heatmap_outputs = outputs
         aux_mask_outputs = None
+
     # main loss
     for loss_fn, loss_wt in zip(loss_fns, loss_wts):
         if loss_fn == 'mse':
@@ -23,11 +25,14 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args,
             loss = LossNLL(class_weights=args.class_weights, num_classes=args.num_classes)(heatmap_outputs, targets)
         elif loss_fn == 'soft_jaccard':
             loss = LossSoftJaccard(num_classes=args.num_classes)(heatmap_outputs, targets)
-        else: 
+        else:
             raise ValueError(f'Loss function {loss_fn} not implemented')
+
         total_loss += loss_wt * loss
         loss_dict['loss_' + loss_fn] = loss.item()
-    aux_loss = torch.tensor(0.0, device= heatmap_outputs.device)
+
+    aux_loss = torch.tensor(0.0, device=heatmap_outputs.device)
+
     if aux_mask_outputs is not None and aux_mask_target is not None:
         if aux_mask_target.dim() == 3:
             aux_mask_target = aux_mask_target.unsqueeze(1)   # [B,1,H,W]
@@ -38,13 +43,29 @@ def get_loss(outputs, targets, loss_fns, loss_wts, args,
         valid_mask = (aux_mask_target.flatten(1).sum(dim=1) > 0)   # [B]
 
         if valid_mask.any():
-            pred_valid = aux_mask_outputs[valid_mask]      # [B,1,H,W]
-            target_valid = aux_mask_target[valid_mask]     # [B,1,H,W]
+            pred_valid = aux_mask_outputs[valid_mask]          # [Bv,1,H,W]
+            target_valid = aux_mask_target[valid_mask]         # [Bv,1,H,W]
+            heatmap_valid_outputs = heatmap_outputs[valid_mask]  # [Bv,K,H,W]
 
-            aux_loss = F.binary_cross_entropy_with_logits(
+            # gate from refined heatmap confidence
+            Bv, K, H, W = heatmap_valid_outputs.shape
+            peak_per_kpt = heatmap_valid_outputs.reshape(Bv, K, -1).max(dim=-1)[0]   # [Bv,K]
+            conf = peak_per_kpt.mean(dim=1).detach()                                  # [Bv]
+
+            g = 1.0 - conf
+            g = torch.clamp(g, min=0.2, max=1.0)                                      # [Bv]
+
+            # aux loss per sample
+            aux_loss_map = F.binary_cross_entropy_with_logits(
                 pred_valid,
-                target_valid
-            )
+                target_valid,
+                reduction='none'
+            )   # [Bv,1,H,W]
+
+            aux_loss_per_sample = aux_loss_map.mean(dim=(1, 2, 3))                    # [Bv]
+
+            # gated aux loss
+            aux_loss = (g * aux_loss_per_sample).mean()
 
             total_loss += aux_mask_weight * aux_loss
 

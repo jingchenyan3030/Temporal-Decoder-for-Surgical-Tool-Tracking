@@ -4,8 +4,8 @@ Configuration file stating all the args for multi-frame segmentation task
 
 def train_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--data_dir', type=str, default='/home/chenyan/fallout_data/data/0923_by_action_2', 
-                        help='Path to data directory. Default:/home/chenyan/fallout_data/data/0923_by_action_2')
+    parser.add_argument('--data_dir', type=str, default='/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action', 
+                        help='Path to data directory. Default:/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT','ACT'],
                         help='Dataset name. Default: KPT')
     parser.add_argument('--fold_index', type=int, default=-1, choices=[-1,0,1,2,3], 
@@ -17,14 +17,14 @@ def train_config_parser(parser):
                         help='Mode of operation. Default: training')
     parser.add_argument('--num_frames_per_video', type=int, default=1000,    
                         help='Number of frames per video/folder in the dataset. Default: 225')  # Do not want to use
-    parser.add_argument('--action', type=str, default='clip', choices=['grasp', 'clip','dissect', 'cut'], 
-                        help='Mode of operation. Default: clip')
+    parser.add_argument('--action', type=str, default='grasp', choices=['grasp', 'clip','dissect', 'cut'], 
+                        help='Mode of operation. Default: grasp')
     parser.add_argument('--track', type = int, default=0,choices=[0,1])
     # I/O related arguments
     parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
                         help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
-    parser.add_argument('--expt_name', type=str, default='multiframe_clip_drop_1',
-                        help='Experiment name. Default: multiframe_clip_mse_sam_drop')
+    parser.add_argument('--expt_name', type=str, default='multiframe_grasp_mse',
+                        help='Experiment name. Default: multiframe_grasp_mse')
     parser.add_argument('--print_freq', type=int, default=1, 
                         help='Print frequency. Default: 1')
     parser.add_argument('--save_freq', type=int, default=1,

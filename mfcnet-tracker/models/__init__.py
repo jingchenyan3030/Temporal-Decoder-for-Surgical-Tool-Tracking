@@ -17,12 +17,22 @@ from .refinement_model import SingleFrameRefineTernaus
 from .multiframe_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
 '''
-
+'''
 # mse multi-frame models
-from .multiframe_model_refine import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
+from .multiframe_mse_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
 
+'''
+# prior +aux_mid
+from .multiframe_model_refine import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge     
 
+
+
+
+'''
+# prior
+from .prior_model import TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge  
+'''
 '''
 from .multiframe_model_detr import TernusNetMultiDETRBasic, TernausNetMultiBasic, TernausNetMultiLarge, DeepLabMultiBasic, DeepLabMultiLarge, \
     FCNMultiBasic, FCNMultiLarge, SegFormerMultiBasic, SegFormerMultiLarge, HRNetMultiBasic, HRNetMultiLarge
@@ -80,10 +90,10 @@ def get_tooltip_segmentation_model(args):
 def get_multiframe_segmentation_model(args):
     if args.model_type == 'TernausNetMulti-Basic':
         model = TernausNetMultiBasic(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,  
-                         optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)
+                         optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs, with_coarse=True, with_sam_mask=True)
     elif args.model_type == 'TernausNetMulti-Large':
         model = TernausNetMultiLarge(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,  
-                         optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)
+                         optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs, with_coarse=True, with_sam_mask=True)
     elif args.model_type == 'DeepLabMulti-Basic':
         model = DeepLabMultiBasic(num_classes=args.num_classes, num_frames=args.num_input_frames, pretrained=args.pretrained, loadpath=args.load_wts_base_model,  
                          optflow_inputs=args.add_optflow_inputs, depth_inputs=args.add_depth_inputs)

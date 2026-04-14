@@ -207,25 +207,63 @@ from natsort import natsorted
 
 def get_KPT_dataset_filenames(args):
     root = Path(args.data_dir)
-    all_cases = natsorted(
-        [d for d in root.iterdir() if d.is_dir() and d.name.lower() != "test" and d.name.lower() != "test_multiframe"],
-        key=str
-    )
 
-    actions = ['grasp','clip','cut','dissect']
+    actions = ['grasp', 'clip', 'cut', 'dissect']
     if hasattr(args, "action") and args.action in actions:
-        actions = [args.action] 
+        actions = [args.action]
     elif hasattr(args, "action") and args.action not in actions and args.action is not None:
         print(f"[Warning] Unknown action '{args.action}', proceeding with all actions.")
-       
+
+    def collect(cases):
+        files = []
+
+        for case in cases:
+            for video_dir in natsorted(case.iterdir(), key=str):
+
+                img_dir  = video_dir / "images"
+                pose_dir = video_dir / "pose_map"
+                sam_dir  = video_dir / "sam_results"
+                detr_dir = video_dir / "points_detr"
+
+                if not img_dir.exists() or not pose_dir.exists() or not sam_dir.exists() or not detr_dir.exists():
+                    continue
+
+                images = natsorted(
+                    [p for p in img_dir.glob("*") if p.suffix.lower() in [".png", ".jpg", ".jpeg"]],
+                    key=str
+                )
+                poses = natsorted(list(pose_dir.glob("*.png")), key=str)
+                sam_masks = natsorted(
+                    [p for p in sam_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")],
+                    key=str
+                )
+                detr_points = natsorted(list(detr_dir.glob("frame_*.json")), key=str)
+
+                if not (len(images) == len(poses) == len(sam_masks) == len(detr_points)):
+                    print(
+                        f"[DROP VIDEO] {video_dir} "
+                        f"images={len(images)} poses={len(poses)} npy={len(sam_masks)} detr={len(detr_points)}"
+                    )
+                    continue
+
+                files.extend(images)
+
+        return files
+
+    def split_dirs(dirs, num_test):
+        if len(dirs) <= num_test:
+            return [], dirs
+        return dirs[:-num_test], dirs[-num_test:]
+
+    all_train_files = []
+    all_val_files = []
+    all_test_files = []
+
     for action in actions:
-        train_files = []
-        val_files = []
-        test_files = []
         action_dir = root / action
         if not action_dir.exists():
             raise ValueError(f"Action directory '{action}' does not exist in the dataset root.")
-        
+
         all_cases = natsorted(
             [d for d in action_dir.iterdir() if d.is_dir()],
             key=str
@@ -236,11 +274,6 @@ def get_KPT_dataset_filenames(args):
         comp_dirs = [d for d in all_cases if d.name.lower().startswith("comprehensive")]
         heichole_dirs = [d for d in all_cases if d.name.lower().startswith("heichole")]
         youtube_dirs = [d for d in all_cases if d.name.lower().startswith("youtube_cholecystectomy")]
-
-        def split_dirs(dirs, num_test):
-            if len(dirs) <= num_test:
-                return [], dirs
-            return dirs[:-num_test], dirs[-num_test:]
 
         train_cases, test_cases = [], []
 
@@ -254,97 +287,116 @@ def get_KPT_dataset_filenames(args):
             train, test = split_dirs(group, num_test)
             train_cases.extend(train)
             test_cases.extend(test)
-        
-        val_cases = train_cases[-5:] if len(train_cases) > 5 else []
-        '''
-        if len(train_cases) >= 2:
-            val_cases = [train_cases[-1]]     # 1 case for val
-            train_cases = train_cases[:-1]    # remaining for train
+
+        if len(train_cases) >= 1:
+            val_cases = [train_cases[-1]]
+            train_cases = train_cases[:-1]
         else:
             val_cases = []
-        '''
-        def collect(cases):
-            files = []
-
-            for case in cases:
-                for video_dir in natsorted(case.iterdir(), key=str):
-
-                    img_dir  = video_dir / "images"
-                    pose_dir = video_dir / "pose_map"
-                    sam_dir  = video_dir / "sam_results"
-                    detr_dir = video_dir / "points_detr"
-
-                    if not img_dir.exists() or not pose_dir.exists() or not sam_dir.exists():
-                        continue
-
-                    images = natsorted(
-                        [p for p in img_dir.glob("*") if p.suffix.lower() in [".png",".jpg",".jpeg"]],
-                        key=str
-                    )
-                    poses = natsorted(list(pose_dir.glob("*.png")), key=str)
-                    sam_masks = natsorted([p for p in sam_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")], key=str)
-                    #sam_weights = natsorted(list(sam_dir.glob("frame_*_weight.npy")),key=str)
-                    detr_points = natsorted(list(detr_dir.glob("frame_*.json")), key=str)
-
-                    if not (len(images) == len(poses) == len(sam_masks) == len(detr_points)):
-                        print(
-                            f"[DROP VIDEO] {video_dir} "
-                            f"images={len(images)} poses={len(poses)} npy={len(sam_masks)} detr={len(detr_points)} "
-                        )
-                        continue
-                    '''
-                    # optional: strict index check
-                    ok = True
-                    for i in range(len(images)):
-                        if not (sam_dir / f"frame_{i+1:03d}_mask.npy").exists():
-                            ok = False
-                            break
-                    if not ok:
-                        print(f"[DROP VIDEO] {video_dir} frame index mismatch")
-                        continue
-                    '''
-                    files.extend(images)
-                   
-            return files
-
 
         train_files = collect(train_cases)
         val_files = collect(val_cases)
         test_files = collect(test_cases)
 
+        all_train_files.extend(train_files)
+        all_val_files.extend(val_files)
+        all_test_files.extend(test_files)
 
     if args.mode == 'training':
-        return train_files, val_files
+        return all_train_files, all_val_files
     elif args.mode == 'testing':
-        return test_files, None
+        return all_test_files, None
     elif args.mode == 'all':
+        all_cases = []
+        for action in actions:
+            action_dir = root / action
+            if not action_dir.exists():
+                continue
+            action_cases = natsorted(
+                [d for d in action_dir.iterdir() if d.is_dir()],
+                key=str
+            )
+            all_cases.extend(action_cases)
+
         all_files = collect(all_cases)
         return all_files, None
     else:
         raise ValueError(f"Unknown mode: {args.mode}")
 
 
+from pathlib import Path
+from natsort import natsorted
+
 def get_KPT_refine_dataset_filenames(args):
     root = Path(args.data_dir)
-    all_cases = natsorted(
-        [d for d in root.iterdir() if d.is_dir() and d.name.lower() != "test" and d.name.lower() != "test_multiframe"],
-        key=str
-    )
 
-    actions = ['grasp','clip','cut','dissect']
+    actions = ['grasp', 'clip', 'cut', 'dissect']
     if hasattr(args, "action") and args.action in actions:
-        actions = [args.action] 
+        actions = [args.action]
     elif hasattr(args, "action") and args.action not in actions and args.action is not None:
         print(f"[Warning] Unknown action '{args.action}', proceeding with all actions.")
-       
+
+    def split_dirs(dirs, num_test):
+        if len(dirs) <= num_test:
+            return [], dirs
+        return dirs[:-num_test], dirs[-num_test:]
+
+    def collect(cases):
+        files = []
+
+        for case in cases:
+            for video_dir in natsorted(case.iterdir(), key=str):
+                img_dir = video_dir / "images"
+                heatmap_coarse_dir = video_dir / "heatmap_coarse"
+                mask_coarse_dir = video_dir / "mask_coarse"
+                gt_heatmap_dir = video_dir / "sam_results"
+                detr_dir = video_dir / "points_detr"
+
+                if not img_dir.exists() or not heatmap_coarse_dir.exists() or not mask_coarse_dir.exists() or not gt_heatmap_dir.exists() or not detr_dir.exists():
+                    continue
+
+                images = natsorted(
+                    [p for p in img_dir.glob("*") if p.suffix.lower() in [".png", ".jpg", ".jpeg"]],
+                    key=str
+                )
+                coarse_heatmap = natsorted(
+                    [p for p in heatmap_coarse_dir.glob("frame_*.npy")],
+                    key=str
+                )
+                coarse_mask = natsorted(
+                    [p for p in mask_coarse_dir.glob("frame_*.npy")],
+                    key=str
+                )
+                gt_heatmap = natsorted(
+                    [p for p in gt_heatmap_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")],
+                    key=str
+                )
+                detr_points = natsorted(
+                    [p for p in detr_dir.glob("frame_*.json")],
+                    key=str
+                )
+
+                if not (len(images) == len(coarse_heatmap) == len(coarse_mask) == len(gt_heatmap) == len(detr_points)):
+                    print(
+                        f"[DROP VIDEO] {video_dir} "
+                        f"images={len(images)} coarse={len(coarse_heatmap)} "
+                        f"mask={len(coarse_mask)} gt={len(gt_heatmap)} detr={len(detr_points)}"
+                    )
+                    continue
+
+                files.extend(images)
+
+        return files
+
+    all_train_files = []
+    all_val_files = []
+    all_test_files = []
+
     for action in actions:
-        train_files = []
-        val_files = []
-        test_files = []
         action_dir = root / action
         if not action_dir.exists():
             raise ValueError(f"Action directory '{action}' does not exist in the dataset root.")
-        
+
         all_cases = natsorted(
             [d for d in action_dir.iterdir() if d.is_dir()],
             key=str
@@ -355,11 +407,6 @@ def get_KPT_refine_dataset_filenames(args):
         comp_dirs = [d for d in all_cases if d.name.lower().startswith("comprehensive")]
         heichole_dirs = [d for d in all_cases if d.name.lower().startswith("heichole")]
         youtube_dirs = [d for d in all_cases if d.name.lower().startswith("youtube_cholecystectomy")]
-
-        def split_dirs(dirs, num_test):
-            if len(dirs) <= num_test:
-                return [], dirs
-            return dirs[:-num_test], dirs[-num_test:]
 
         train_cases, test_cases = [], []
 
@@ -373,53 +420,37 @@ def get_KPT_refine_dataset_filenames(args):
             train, test = split_dirs(group, num_test)
             train_cases.extend(train)
             test_cases.extend(test)
-        
-        val_cases = train_cases[-5:] if len(train_cases) > 5 else []
 
-        def collect(cases):
-            files = []
-
-            for case in cases:
-                for video_dir in natsorted(case.iterdir(), key=str):
-
-                    img_dir  = video_dir / "images"
-                    heatmap_coarse_dir  = video_dir / "heatmap_coarse"
-                    mask_coarse_dir = video_dir / "mask_coarse"
-                    gt_heatmap_dir =  video_dir / "sam_results"
-                    detr_dir = video_dir / 'points_detr'
-
-                    if not img_dir.exists() or not heatmap_coarse_dir.exists() or not mask_coarse_dir.exists() or not gt_heatmap_dir.exists():
-                        continue
-
-                    images = natsorted(
-                        [p for p in img_dir.glob("*") if p.suffix.lower() in [".png",".jpg",".jpeg"]],
-                        key=str
-                    )
-                    coarse_heatmap = natsorted([p for p in heatmap_coarse_dir.glob("frame_*.npy")], key=str)
-                    coarse_mask = natsorted([p for p in mask_coarse_dir.glob("frame_*.npy")], key=str)
-                    gt_heatmap = natsorted([p for p in gt_heatmap_dir.glob("frame_*.npy") if not p.stem.endswith("_weight")], key=str)
-
-                    if not (len(images) == len(coarse_heatmap) == len(coarse_mask)==len(gt_heatmap)):
-                        print(
-                            f"[DROP VIDEO] {video_dir} "
-                            f"images={len(images)} coarse={len(coarse_heatmap)} npy={len(coarse_mask)} gt={len(gt_heatmap)}  "
-                        )
-                        continue
-                    files.extend(images)
-                   
-            return files
-
+        if len(train_cases) >= 1:
+            val_cases = [train_cases[-1]]
+            train_cases = train_cases[:-1]
+        else:
+            val_cases = []
 
         train_files = collect(train_cases)
         val_files = collect(val_cases)
         test_files = collect(test_cases)
 
+        all_train_files.extend(train_files)
+        all_val_files.extend(val_files)
+        all_test_files.extend(test_files)
 
     if args.mode == 'training':
-        return train_files, val_files
+        return all_train_files, all_val_files
     elif args.mode == 'testing':
-        return test_files, None
+        return all_test_files, None
     elif args.mode == 'all':
+        all_cases = []
+        for action in actions:
+            action_dir = root / action
+            if not action_dir.exists():
+                continue
+            action_cases = natsorted(
+                [d for d in action_dir.iterdir() if d.is_dir()],
+                key=str
+            )
+            all_cases.extend(action_cases)
+
         all_files = collect(all_cases)
         return all_files, None
     else:

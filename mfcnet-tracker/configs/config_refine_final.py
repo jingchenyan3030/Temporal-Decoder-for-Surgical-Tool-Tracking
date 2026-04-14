@@ -4,8 +4,8 @@ Configuration file stating all the args for multi-frame segmentation task
 
 def train_config_parser(parser):
     # dataset related arguments
-    parser.add_argument('--data_dir', type=str, default='/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action_2', 
-                        help='Path to data directory. Default:/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action_2')
+    parser.add_argument('--data_dir', type=str, default='/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action', 
+                        help='Path to data directory. Default:/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action')
     parser.add_argument('--dataset', type=str, default='KPT_refine', choices=['MICCAI2015', 'MICCAI2017', 'JIGSAWS', 'KPT','ACT','KPT_refine'],
                         help='Dataset name. Default: KPT_refine')
     parser.add_argument('--fold_index', type=int, default=-1, choices=[-1,0,1,2,3], 
@@ -17,15 +17,15 @@ def train_config_parser(parser):
                         help='Mode of operation. Default: training')
     parser.add_argument('--num_frames_per_video', type=int, default=1000,    
                         help='Number of frames per video/folder in the dataset. Default: 225')  # Do not want to use
-    parser.add_argument('--action', type=str, default='clip', choices=['grasp', 'clip','dissect', 'cut'], 
-                        help='Mode of operation. Default: clip')
+    parser.add_argument('--action', type=str, default='grasp', choices=['grasp', 'clip','dissect', 'cut'], 
+                        help='Mode of operation. Default: grasp')
     parser.add_argument('--track', type = int, default=0,choices=[0,1])
     parser.add_argument('--use_mask', type=bool, default=False)
     # I/O related arguments
     parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint', 
                         help='Path to save experiment results. Default: /home/chenyan/fallout_data/checkpoint')
-    parser.add_argument('--expt_name', type=str, default='multiframe_clip_refine_auxmask_stage',
-                        help='Experiment name. Default: multiframe_clip_refine_auxmask_stage')
+    parser.add_argument('--expt_name', type=str, default='multiframe_grasp_refine_prior',
+                        help='Experiment name. Default: multiframe_grasp_refine_prior')
     parser.add_argument('--print_freq', type=int, default=1, 
                         help='Print frequency. Default: 1')
     parser.add_argument('--save_freq', type=int, default=1,
@@ -38,7 +38,7 @@ def train_config_parser(parser):
 
     # optimizer related arguments
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size. Default: 4')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for dataloader. Default: 8')
+    parser.add_argument('--num_workers', type=int, default=6, help='Number of workers for dataloader. Default: 8')
     parser.add_argument('--lr', type=float, default=1e-4, 
                         help='Learning rate. Default: 1e-4')
     parser.add_argument('--scheduler', type=str, default='StepDecay', choices=['StepDecay', 'Constant'], 
@@ -84,7 +84,7 @@ def train_config_parser(parser):
     parser.add_argument('--optflow_model', type=str, default='RAFT', choices=['RAFT', 'FlowFormerPlusPlus'],)
     parser.add_argument('--add_depth_inputs', type=bool, default=True, help='Add monocular depth inputs')
 
-    parser.add_argument('--aux_mask_weight', type=float, default=0.05)
+    #parser.add_argument('--aux_mask_weight', type=float, default=0.05)
     parser.add_argument('--use_sam_dropout', action='store_true')
     parser.add_argument('--sam_keep_prob', type=float, default=0.8)
     return parser
@@ -106,10 +106,6 @@ def test_config_parser(parser):
                         help='Number of input frames for the model. Default: 8')
     parser.add_argument('--track', type = int, default=0,choices=[0,1])
     parser.add_argument('--use_mask', type=bool, default=False)
-    parser.add_argument('--use_sam_dropout', action='store_true',
-                    help='Apply sample-level dropout to SAM input during training')
-    parser.add_argument('--sam_keep_prob', type=float, default=0.8,
-                        help='Probability of keeping SAM mask input')
     
     # I/O related arguments
     parser.add_argument('--expt_savedir', type=str, default='/home/chenyan/fallout_data/checkpoint/testing_multiframe_kpt_mse_nosoftmax', 
@@ -137,7 +133,7 @@ def test_config_parser(parser):
                         help='Use pre-trained weights. Default: False')
     parser.add_argument('--load_wts_base_model', type=str, default= None, 
                         help='Path to base model weights from a pretrained per-frame model. Default: None')
-    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_refine_nomask_stage_full/ckpts/model_010.pth', 
+    parser.add_argument('--load_wts_model', type=str, default='/home/chenyan/fallout_data/checkpoint/multiframe_clip_refine_final_stage_full/ckpts/model_010.pth', 
                         help='Path to model weights. Default: None')
     parser.add_argument('--input_height', type=int, default=256, help='NN input image height')
     parser.add_argument('--input_width', type=int, default=320, help='NN input image width')
@@ -151,6 +147,9 @@ def test_config_parser(parser):
     parser.add_argument('--num_classes', type=int, default=2)
     parser.add_argument('--metric_fns', type=str, nargs='+', default=[],
                     help='Heatmap task: keep empty.') 
+    parser.add_argument('--aux_mask_weight', type=float, default=0.05)
+    parser.add_argument('--use_sam_dropout', action='store_true')
+    parser.add_argument('--sam_keep_prob', type=float, default=0.8)
     
     return parser
 

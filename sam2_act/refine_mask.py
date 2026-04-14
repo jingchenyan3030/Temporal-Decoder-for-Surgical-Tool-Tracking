@@ -491,7 +491,7 @@ def load_kpt_mapping(csv_path):
 
             video_path = video_path.replace(
     "/data/home/hao/chenyan/data/training_data/",
-    "/home/chenyan/fallout_data/data/0923_by_action_2/clip/"
+    "/home/chenyan/fallout_data/data/0923_by_action/grasp/"
 )
 
             entries.append({
@@ -535,9 +535,9 @@ parser.add_argument("--dataset",type=str, required=True, choices=["act","kpt"], 
 parser.add_argument(
     "--action",
     type=str,
-    default="clip",
+    default="grasp",
     choices=["clip", "cut", "grasp", "dissect"],
-    help="Action to process (default: clip)"
+    help="Action to process (default: grasp)"
 )
 args = parser.parse_args()
 
@@ -545,7 +545,7 @@ args = parser.parse_args()
 
 if __name__ == "__main__":
     if args.dataset == "kpt":
-        base_root = Path("/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action_2") / args.action
+        base_root = Path("/mnt/sda1/datasets/chenyan/fallout_data/data/0923_by_action") / args.action
 
         if not base_root.exists():
             print(f"[WARN] No action dir found for {base_root}, skipping.")
